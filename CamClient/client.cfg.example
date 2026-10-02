@@ -1,0 +1,41 @@
+# Copy this file to client.cfg (in the working directory of the client). Every setting can also be given as --key=value on the command line,
+# which overrides this file. Use --config=path to load a different file. Settings that are not set use the defaults shown here.
+
+# Address and port of the server.
+server_ip = 127.0.0.1
+server_port = 45645
+
+# Name of this camera, shown as title of the preview window on the server.
+name = Client #1
+
+# Index of the camera. On Windows this is the position in the DirectShow device list, e.g. run
+#   ffmpeg -list_devices true -f dshow -i dummy
+# to see the order. On Linux this is the /dev/videoN number.
+camera_index = 0
+
+# Requested frame size. 0 uses the default size of the camera.
+camera_width = 1280
+camera_height = 720
+
+# Headless mode: no windows are opened, the frames are only sent to the server. Needed on devices without a display (e.g. a Raspberry Pi
+# running as a service). Stop with Ctrl+C, the client then disconnects from the server cleanly.
+headless = false
+
+# Rotates the image by 180 degrees.
+flip_image = false
+
+# Frames per second announced to the server (sizes its backup buffer).
+fps = 30
+
+# JPEG quality of the frames sent to the server (1 - 100). Lower is less bandwidth, but a worse picture.
+jpeg_quality = 80
+
+# Bandwidth tuning (e.g. for the Raspberry Pi). Both are off by default, so everything is sent in full quality.
+# They only affect what is sent to the server, the local preview keeps the full size and frame rate.
+
+# Scales the frames down to this width (keeps the aspect ratio, never scales up) before sending. 0 = camera size.
+# Example: 640 sends 640x360 for a 1280x720 camera.
+send_width = 0
+
+# Maximum frames per second sent to the server. 0 = send every frame.
+max_fps = 0

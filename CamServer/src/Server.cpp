@@ -40,6 +40,11 @@ Server::~Server()
 		m_FramePreviewThread.join();
 	}
 
+	if (m_ReaperThread.joinable())
+	{
+		m_ReaperThread.join();
+	}
+
 	m_Clients.clear();
 
 	delete m_Socket;
@@ -50,6 +55,11 @@ void Server::Run()
 {
 	m_Running = true;
 	CAM_LOG_INFO("Waiting for clients to connect...");
+
+	if (m_Config.ClientTimeoutSeconds != 0)
+	{
+		m_ReaperThread = std::thread(&Server::ReapStaleClients, std::ref(*this));
+	}
 
 	for (;;)
 	{
@@ -85,6 +95,11 @@ void Server::Run()
 	}
 
 	m_Running = false;
+
+	if (m_ReaperThread.joinable())
+	{
+		m_ReaperThread.join();
+	}
 }
 
 void Server::StartFramePreviews()
@@ -123,6 +138,10 @@ bool Server::Step()
 		case CLIENT_FRAME:
 			message_success = OnClientFrameChunk(addr, BUF, len);
 			break;
+
+		case CLIENT_HEARTBEAT:
+			message_success = OnClientHeartbeat(addr, BUF, len);
+			break;
 	}
 
 	if (!message_success)
@@ -159,7 +178,12 @@ bool Server::OnClientConnected(Core::addr_t &clientAddr, Byte *message, int32 ad
 
 	{
 		std::lock_guard<std::mutex> lock(m_ClientsMutex);
-		if (!FindClient(clientAddr))
+		ClientEntry *existing = FindClient(clientAddr);
+		if (existing)
+		{
+			existing->LastSeen = std::chrono::steady_clock::now();
+		}
+		else
 		{
 			// No client registered yet
 
@@ -228,6 +252,60 @@ bool Server::OnClientDisconnected(Core::addr_t &clientAddr, Byte *message, int32
 	return true;
 }
 
+bool Server::OnClientHeartbeat(Core::addr_t &clientAddr, Byte *message, int32 addrLen)
+{
+	header_t *header = (header_t *)message;
+	if (header->Version != m_Version || addrLen != sizeof(ClientHeartbeatMessage))
+	{
+		return false;
+	}
+
+	std::lock_guard<std::mutex> lock(m_ClientsMutex);
+	ClientEntry *client = FindClient(clientAddr);
+	if (client)
+	{
+		client->LastSeen = std::chrono::steady_clock::now();
+	}
+	else
+	{
+		SendClientUnknown(clientAddr);
+	}
+
+	return true;
+}
+
+void Server::SendClientUnknown(Core::addr_t &clientAddr)
+{
+	ServerClientUnknownMessage response = {};
+	response.Header.Type = SERVER_CLIENT_UNKNOWN;
+	response.Header.Version = m_Version;
+	m_Socket->Send(&response, sizeof(response), clientAddr);
+}
+
+void Server::ReapStaleClients()
+{
+	const auto timeout = std::chrono::seconds(m_Config.ClientTimeoutSeconds);
+	while (m_Running)
+	{
+		Core::SleepMS(500);
+
+		std::lock_guard<std::mutex> lock(m_ClientsMutex);
+		auto now = std::chrono::steady_clock::now();
+		for (auto it = m_Clients.begin(); it != m_Clients.end();)
+		{
+			if (now - (*it)->LastSeen > timeout)
+			{
+				CAM_LOG_INFO("Client {0} ({1}) timed out after {2} seconds without a message, removing it.", (*it)->Address.Value, (*it)->FrameTitle, m_Config.ClientTimeoutSeconds);
+				it = m_Clients.erase(it);
+			}
+			else
+			{
+				++it;
+			}
+		}
+	}
+}
+
 ClientEntry *Server::FindClient(const Core::addr_t &clientAddr)
 {
 	for (auto &client : m_Clients)
@@ -280,9 +358,16 @@ bool Server::OnClientFrameChunk(Core::addr_t &clientAddr, Byte *message, int32 a
 	ClientEntry *client = FindClient(clientAddr);
 	if (!client)
 	{
-		// Unknown sender (e.g. not connected yet), just ignore the frame.
+		// Unknown sender (e.g. timed out or the server was restarted). Tell it once per frame, so it reconnects.
+		if (chunk_index == 0)
+		{
+			SendClientUnknown(clientAddr);
+		}
+
 		return true;
 	}
+
+	client->LastSeen = std::chrono::steady_clock::now();
 
 	FrameAssembly &assembly = client->Assembly;
 	if (assembly.Active && chunk->FrameId != assembly.FrameId)
@@ -296,6 +381,7 @@ bool Server::OnClientFrameChunk(Core::addr_t &clientAddr, Byte *message, int32 a
 		// A newer frame started before the current one was complete, some datagram got lost. Drop the incomplete frame.
 		CAM_LOG_DEBUG("Dropped incomplete frame {0} ({1}/{2} chunks).", assembly.FrameId, assembly.ReceivedChunks, assembly.ChunkCount);
 		assembly.Active = false;
+		++client->DroppedFrames;
 	}
 
 	if (!assembly.Active)
@@ -331,6 +417,11 @@ bool Server::OnClientFrameChunk(Core::addr_t &clientAddr, Byte *message, int32 a
 		client->LatestFrame = assembly.Data;
 		++client->LatestFrameNumber;
 
+		if (client->LatestFrameNumber % 100 == 0)
+		{
+			CAM_LOG_INFO("Client {0}: {1} frames received, {2} dropped incomplete.", client->FrameTitle, client->LatestFrameNumber, client->DroppedFrames);
+		}
+
 		assembly.Data.reset();
 		assembly.Active = false;
 	}
@@ -349,47 +440,129 @@ void Server::FramePreview()
 	std::unordered_map<uint64, uint32> shown_frames;
 	std::unordered_set<std::string> created_windows;
 
+	// Windows, which the user closed. They stay closed until the client disconnects and comes back.
+	std::unordered_set<std::string> dismissed_windows;
+
+	// OpenCV throws if a window does not exist (anymore), e.g. because the user closed it. That must never take down the server.
+	auto destroy_window = [](const std::string &name)
+	{
+		try
+		{
+			cv::destroyWindow(name);
+		}
+		catch (const cv::Exception &)
+		{
+		}
+	};
+
+	auto is_window_visible = [](const std::string &name)
+	{
+		try
+		{
+			return cv::getWindowProperty(name, cv::WND_PROP_VISIBLE) >= 1;
+		}
+		catch (const cv::Exception &)
+		{
+			return false;
+		}
+	};
+
 	while (m_Running)
 	{
-		// Only hold the lock while copying the (shared) frame pointers, decoding and drawing happens without it.
-		std::vector<Preview> previews;
+		try
 		{
-			std::lock_guard<std::mutex> lock(m_ClientsMutex);
-			for (auto &client : m_Clients)
+			// Only hold the lock while copying the (shared) frame pointers, decoding and drawing happens without it.
+			std::vector<Preview> previews;
+			std::unordered_set<std::string> active_names;
 			{
-				uint32 &shown = shown_frames[client->Address.Value];
-				if (client->LatestFrame && client->LatestFrameNumber != shown)
+				std::lock_guard<std::mutex> lock(m_ClientsMutex);
+				for (auto &client : m_Clients)
 				{
-					shown = client->LatestFrameNumber;
-					previews.push_back({ client->FrameTitle, client->LatestFrame });
+					active_names.insert(client->FrameTitle);
+					uint32 &shown = shown_frames[client->Address.Value];
+					if (client->LatestFrame && client->LatestFrameNumber != shown)
+					{
+						shown = client->LatestFrameNumber;
+						previews.push_back({ client->FrameTitle, client->LatestFrame });
+					}
 				}
 			}
-		}
 
-		for (Preview &preview : previews)
-		{
-			cv::Mat frame = cv::imdecode(*preview.Frame, cv::IMREAD_COLOR);
-			if (frame.empty())
+			// Detect windows closed by the user (X button).
+			for (auto it = created_windows.begin(); it != created_windows.end();)
 			{
-				CAM_LOG_ERROR("Could not decode frame of {}!", preview.Name);
-				continue;
+				if (!is_window_visible(*it))
+				{
+					dismissed_windows.insert(*it);
+					destroy_window(*it);
+					it = created_windows.erase(it);
+				}
+				else
+				{
+					++it;
+				}
 			}
 
-			if (created_windows.insert(preview.Name).second)
+			for (Preview &preview : previews)
 			{
-				// Resizable window, which keeps the aspect ratio of the frame instead of stretching it. Starts with the size of the frame.
-				cv::namedWindow(preview.Name.c_str(), cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
-				cv::resizeWindow(preview.Name.c_str(), frame.cols, frame.rows);
+				if (dismissed_windows.count(preview.Name))
+				{
+					continue;
+				}
+
+				cv::Mat frame = cv::imdecode(*preview.Frame, cv::IMREAD_COLOR);
+				if (frame.empty())
+				{
+					CAM_LOG_ERROR("Could not decode frame of {}!", preview.Name);
+					continue;
+				}
+
+				if (created_windows.insert(preview.Name).second)
+				{
+					// Resizable window, which keeps the aspect ratio of the frame instead of stretching it. Starts with the size of the frame.
+					cv::namedWindow(preview.Name, cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
+					cv::resizeWindow(preview.Name, frame.cols, frame.rows);
+				}
+
+				cv::imshow(preview.Name, frame);
 			}
 
-			cv::imshow(preview.Name.c_str(), frame);
-		}
+			// Close the windows of clients, which disconnected or timed out. A client, which comes back, gets its window again.
+			for (auto it = created_windows.begin(); it != created_windows.end();)
+			{
+				if (active_names.find(*it) == active_names.end())
+				{
+					destroy_window(*it);
+					it = created_windows.erase(it);
+				}
+				else
+				{
+					++it;
+				}
+			}
 
-		char key = (char)cv::waitKey(1);
-		if (key == 'q')
+			for (auto it = dismissed_windows.begin(); it != dismissed_windows.end();)
+			{
+				it = active_names.find(*it) == active_names.end() ? dismissed_windows.erase(it) : std::next(it);
+			}
+
+			char key = (char)cv::waitKey(1);
+			if (key == 'q')
+			{
+				// Close all windows and keep them closed, like closing every window by hand.
+				for (const std::string &name : created_windows)
+				{
+					dismissed_windows.insert(name);
+					destroy_window(name);
+				}
+
+				created_windows.clear();
+			}
+		}
+		catch (const cv::Exception &e)
 		{
-			cv::destroyAllWindows();
-			created_windows.clear();
+			CAM_LOG_ERROR("Preview error: {}", e.what());
+			Core::SleepMS(100);
 		}
 	}
 }

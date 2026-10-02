@@ -9,7 +9,9 @@ enum MessageType : uint16
 	CLIENT_CONNECTION_CLOSE,
 	CLIENT_FRAME,
 	SERVER_CONNECTION_START,
-	SERVER_CONNECTION_CLOSE
+	SERVER_CONNECTION_CLOSE,
+	CLIENT_HEARTBEAT,
+	SERVER_CLIENT_UNKNOWN
 };
 
 #pragma pack(push, 1)
@@ -53,6 +55,18 @@ struct ClientFrameChunkMessage
 	uint32 FrameSize;		// Total size of the JPEG encoded frame in bytes.
 	uint16 ChunkIndex;
 	uint16 ChunkCount;
+};
+
+// Sent regularly by a connected client, so the server can tell an idle client from a dead one.
+struct ClientHeartbeatMessage
+{
+	header_t Header;
+};
+
+// Sent by the server to a client it does not know (anymore), e.g. after a timeout or a server restart. The client has to reconnect.
+struct ServerClientUnknownMessage
+{
+	header_t Header;
 };
 
 struct ServerConnectionStartResponse

@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -13,19 +14,29 @@
 struct ServerConfig
 {
 	/// <summary>
-	/// The IP address of the server.
+	/// The IP address of the server (informational, the server listens on all interfaces).
 	/// </summary>
-	std::string ServerIP;
+	std::string ServerIP = "0.0.0.0";
 	
 	/// <summary>
 	/// The port, at which the server should listen.
 	/// </summary>
-	uint16 Port;
+	uint16 Port = 45645;
 
 	/// <summary>
 	/// The duration in minutes of each camera feed to be kept in memory for saving to disk after something happened.
 	/// </summary>
-	uint32 VideoBackupDuration;
+	uint32 VideoBackupDuration = 5;
+
+	/// <summary>
+	/// Determines, if the live preview windows of all connected cameras are shown.
+	/// </summary>
+	bool ShowPreview = true;
+
+	/// <summary>
+	/// Seconds without any message after which a client is considered dead and removed (its frames are freed). 0 disables the timeout.
+	/// </summary>
+	uint32 ClientTimeoutSeconds = 15;
 };
 
 /// <summary>
@@ -64,6 +75,12 @@ struct ClientEntry
 	/// </summary>
 	EncodedFrame LatestFrame;
 	uint32 LatestFrameNumber = 0;
+	uint32 DroppedFrames = 0;
+
+	/// <summary>
+	/// The last time, something was received from this client (connect request, heartbeat or frame data).
+	/// </summary>
+	std::chrono::steady_clock::time_point LastSeen = std::chrono::steady_clock::now();
 
 	ClientEntry(uint32 frame_capacity)
 		: Frames(frame_capacity)
@@ -92,6 +109,7 @@ private:
 
 	bool OnClientConnected(Core::addr_t &clientAddr, Byte *message, int32 addrLen);
 	bool OnClientDisconnected(Core::addr_t &clientAddr, Byte *message, int32 addrLen);
+	bool OnClientHeartbeat(Core::addr_t &clientAddr, Byte *message, int32 addrLen);
 	bool OnClientFrameChunk(Core::addr_t &clientAddr, Byte *message, int32 addrLen);
 
 	/// <summary>
@@ -100,6 +118,12 @@ private:
 	ClientEntry *FindClient(const Core::addr_t &clientAddr);
 
 	void FramePreview();
+
+	/// <summary>
+	/// Removes all clients, which were not heard of for longer than the configured timeout.
+	/// </summary>
+	void ReapStaleClients();
+	void SendClientUnknown(Core::addr_t &clientAddr);
 
 private:
 
@@ -113,5 +137,6 @@ private:
 	std::mutex m_ClientsMutex;
 	std::vector<std::unique_ptr<ClientEntry>> m_Clients;
 	std::thread m_FramePreviewThread;
+	std::thread m_ReaperThread;
 };
 

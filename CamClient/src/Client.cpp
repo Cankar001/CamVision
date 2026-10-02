@@ -10,20 +10,20 @@
 // How long to wait for the server to accept the connection, before giving up.
 #define CONNECT_TIMEOUT_MS 10000
 
+// How often a connected client tells the server that it is still alive, must be well below the server's client timeout.
+#define HEARTBEAT_INTERVAL_MS 1000
+
 // How often the connection request is repeated while waiting for the server (the datagram might get lost).
 #define CONNECT_RESEND_INTERVAL_MS 500
 
 // How long to wait for the server to confirm that the connection was closed, before giving up.
 #define DISCONNECT_TIMEOUT_MS 2000
 
-// Quality of the JPEG compression for every frame sent to the server (0 - 100).
-#define FRAME_JPEG_QUALITY 80
-
 // Size of the kernel socket buffers. Large enough to hold a burst of datagrams for several frames.
 #define SOCKET_BUFFER_SIZE (4 * 1024 * 1024)
 
 Client::Client(const ClientConfig &config)
-	: m_Config(config), m_Camera(false, 1280, 720)
+	: m_Config(config), m_Camera(config.Camera)
 {
 	std::string cwd = "";
 	Core::FileSystem::Get()->GetCurrentWorkingDirectory(&cwd);
@@ -32,6 +32,13 @@ Client::Client(const ClientConfig &config)
 	CAM_LOG_INFO("===================== CONFIG ===================================");
 	CAM_LOG_INFO("IP                    : {}", config.ServerIP);
 	CAM_LOG_INFO("Port                  : {}", config.Port);
+	CAM_LOG_INFO("Name                  : {}", config.Name);
+	CAM_LOG_INFO("FPS                   : {}", config.FPS);
+	CAM_LOG_INFO("JPEG quality          : {}", config.JpegQuality);
+	CAM_LOG_INFO("Send width            : {}", config.SendWidth == 0 ? "camera size" : std::to_string(config.SendWidth));
+	CAM_LOG_INFO("Max FPS               : {}", config.MaxFPS == 0 ? "unlimited" : std::to_string(config.MaxFPS));
+	CAM_LOG_INFO("Camera index          : {}", config.Camera.Index);
+	CAM_LOG_INFO("Camera size           : {0}x{1}", config.Camera.Width, config.Camera.Height);
 	CAM_LOG_INFO("Current Client version: {}", m_Version);
 	CAM_LOG_INFO("Current CWD           : {}", cwd);
 	CAM_LOG_INFO("================================================================");
@@ -89,15 +96,19 @@ void Client::Run(bool shouldShowFrames)
 	}
 	else
 	{
-		while (m_Running)
-		{
-		}
+		Stream();
 	}
 
 	// wait until the network thread is finished
 	while (!m_NetworkThreadFinished)
 	{
+		Core::SleepMS(1);
 	}
+}
+
+void Client::Stop()
+{
+	m_Running = false;
 }
 
 void Client::NetworkLoop()
@@ -108,18 +119,44 @@ void Client::NetworkLoop()
 	ClientConnectionStartMessage msg = {};
 	msg.Header.Type = CLIENT_CONNECTION_START;
 	msg.Header.Version = m_Version;
-	memcpy(msg.FrameName, "Client #1", sizeof("Client #1"));
-	msg.FPS = 30;
+	memcpy(msg.FrameName, m_Config.Name.c_str(), std::min<size_t>(m_Config.Name.size(), MAX_FRAME_NAME_LENGTH - 1));
+	// Announce the frame rate, which is actually sent.
+	msg.FPS = m_Config.MaxFPS == 0 ? m_Config.FPS : std::min(m_Config.FPS, m_Config.MaxFPS);
 
 	Clock::time_point connect_start = Clock::now();
 	Clock::time_point last_connect_request = Clock::now() - std::chrono::milliseconds(CONNECT_RESEND_INTERVAL_MS);
 	Clock::time_point close_start;
+	Clock::time_point last_heartbeat = Clock::now();
+	bool was_connected = false;
 
 	static Byte BUF[65536];
 	while (true)
 	{
-		if (!m_ConnectedToServer)
+		if (m_ConnectedToServer)
 		{
+			was_connected = true;
+
+			// Lets the server tell an idle client from a dead one.
+			if (m_Running && since_ms(last_heartbeat) >= HEARTBEAT_INTERVAL_MS)
+			{
+				ClientHeartbeatMessage heartbeat = {};
+				heartbeat.Header.Type = CLIENT_HEARTBEAT;
+				heartbeat.Header.Version = m_Version;
+				m_Socket->Send(&heartbeat, sizeof(heartbeat), m_Host);
+				last_heartbeat = Clock::now();
+			}
+		}
+		else if (m_Running)
+		{
+			if (was_connected)
+			{
+				// The server forgot about us (timeout or restart), connect again from scratch.
+				CAM_LOG_INFO("The server does not know this client anymore, reconnecting...");
+				was_connected = false;
+				connect_start = Clock::now();
+				last_connect_request = Clock::now() - std::chrono::milliseconds(CONNECT_RESEND_INTERVAL_MS);
+			}
+
 			if (since_ms(connect_start) >= CONNECT_TIMEOUT_MS)
 			{
 				CAM_LOG_ERROR("Fatal error: Could not connect to server!");
@@ -205,6 +242,15 @@ void Client::NetworkLoop()
 				message_success = OnConnectionClosed(BUF, len);
 				break;
 
+			case SERVER_CLIENT_UNKNOWN:
+				// Not an error, the loop above reconnects as soon as it sees that we are not connected anymore.
+				if (m_Running)
+				{
+					m_ConnectedToServer = false;
+				}
+				message_success = true;
+				break;
+
 		}
 
 		if (!message_success)
@@ -254,7 +300,34 @@ void Client::Show()
 
 		if (!frame)
 		{
-			CAM_LOG_ERROR("Could not read image from camera!");
+			// No new frame within the timeout, just check again if we should still be running.
+			continue;
+		}
+
+		ProcessFrame(frame, frame_size, frame_width, frame_height);
+		SendFrameToServer(frame, frame_size, frame_width, frame_height);
+
+		delete[] frame;
+	}
+}
+
+void Client::Stream()
+{
+	while (m_Running)
+	{
+		if (!m_Camera.IsRunning())
+		{
+			m_Running = false;
+			break;
+		}
+
+		uint32 frame_size = 0;
+		uint32 frame_width = 0;
+		uint32 frame_height = 0;
+		Byte *frame = m_Camera.GetCurrentFrame(&frame_size, &frame_width, &frame_height);
+		if (!frame)
+		{
+			// No new frame within the timeout, just check again if we should still be running.
 			continue;
 		}
 
@@ -321,6 +394,18 @@ void Client::SendFrameToServer(Byte *frame, uint32 frame_size, uint32 frame_widt
 		return;
 	}
 
+	if (m_Config.MaxFPS != 0)
+	{
+		// Skip the frame before any expensive work (scaling, encoding), if the next one is not due yet.
+		auto now = std::chrono::steady_clock::now();
+		if (now - m_LastFrameSent < std::chrono::microseconds(1000000 / m_Config.MaxFPS))
+		{
+			return;
+		}
+
+		m_LastFrameSent = now;
+	}
+
 	cv::Mat image((int32)frame_height, (int32)frame_width, m_Camera.GetFormat(), frame);
 	if (image.total() * image.elemSize() != frame_size)
 	{
@@ -328,7 +413,14 @@ void Client::SendFrameToServer(Byte *frame, uint32 frame_size, uint32 frame_widt
 		return;
 	}
 
-	static const std::vector<int32> params = { cv::IMWRITE_JPEG_QUALITY, FRAME_JPEG_QUALITY };
+	if (m_Config.SendWidth != 0 && m_Config.SendWidth < frame_width)
+	{
+		int32 send_height = std::max<int32>((int32)((uint64)frame_height * m_Config.SendWidth / frame_width), 1);
+		cv::resize(image, m_ScaledImage, cv::Size((int32)m_Config.SendWidth, send_height), 0, 0, cv::INTER_AREA);
+		image = m_ScaledImage;
+	}
+
+	const std::vector<int32> params = { cv::IMWRITE_JPEG_QUALITY, std::clamp(m_Config.JpegQuality, 1, 100) };
 	if (!cv::imencode(".jpg", image, m_EncodeBuffer, params))
 	{
 		CAM_LOG_ERROR("Could not JPEG encode frame, dropping frame.");

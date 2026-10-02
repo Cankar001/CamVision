@@ -6,19 +6,16 @@
 
 #define MAX_RETRIES 5
 
-// Index of the camera in the DirectShow device list (0 = Elgato Virtual Camera, 1 = EOS Webcam Utility, 2 = Elgato Facecam Pro on the dev machine).
-#define CAMERA_INDEX 2
-
 // Frames to discard after opening the camera, cameras deliver grey/dark frames while auto exposure and white balance settle.
 #define CAMERA_WARMUP_FRAMES 30
 
 bool Camera::TryOpenStream(int32 backend, bool useMjpg)
 {
 	m_CameraStream.release();
-	m_CameraStream.open(CAMERA_INDEX, backend);
+	m_CameraStream.open(m_Index, backend);
 	if (!m_CameraStream.isOpened())
 	{
-		CAM_LOG_ERROR("Camera {0}: could not be opened with backend {1}.", CAMERA_INDEX, backend);
+		CAM_LOG_ERROR("Camera {0}: could not be opened with backend {1}.", m_Index, backend);
 		return false;
 	}
 
@@ -45,13 +42,13 @@ bool Camera::TryOpenStream(int32 backend, bool useMjpg)
 
 	if (!got_frame)
 	{
-		CAM_LOG_ERROR("Camera {0}: opened with backend {1} (MJPG: {2}), but no frames could be read.", CAMERA_INDEX, backend, useMjpg);
+		CAM_LOG_ERROR("Camera {0}: opened with backend {1} (MJPG: {2}), but no frames could be read.", m_Index, backend, useMjpg);
 		return false;
 	}
 
 	m_Width = (uint32)frame.cols;
 	m_Height = (uint32)frame.rows;
-	CAM_LOG_INFO("Camera {0}: using backend {1} (MJPG: {2}), {3}x{4}.", CAMERA_INDEX, m_CameraStream.getBackendName(), useMjpg, m_Width, m_Height);
+	CAM_LOG_INFO("Camera {0}: using backend {1} (MJPG: {2}), {3}x{4}.", m_Index, m_CameraStream.getBackendName(), useMjpg, m_Width, m_Height);
 	return true;
 }
 
@@ -67,7 +64,7 @@ void Camera::OpenStream()
 
 	if (!opened)
 	{
-		CAM_LOG_ERROR("Camera {} could not be started with any backend!", CAMERA_INDEX);
+		CAM_LOG_ERROR("Camera {} could not be started with any backend!", m_Index);
 		m_CameraStream.release();
 		m_CameraRunning = false;
 		return;
@@ -78,8 +75,8 @@ void Camera::OpenStream()
 	m_Format = (int32)m_CameraStream.get(cv::CAP_PROP_FORMAT);
 }
 
-Camera::Camera(bool flipImage, uint32 width, uint32 height)
-	: m_FlipImage(flipImage), m_Width(width), m_Height(height)
+Camera::Camera(const CameraConfig &config)
+	: m_FlipImage(config.FlipImage), m_Index(config.Index), m_Width(config.Width), m_Height(config.Height)
 {
 	OpenStream();
 }
@@ -178,7 +175,21 @@ Byte *Camera::GetCurrentFrame(uint32 *out_frame_size, uint32 *out_frame_width, u
 		return nullptr;
 	}
 
-	cv::Mat frame = m_ImageQueue.Dequeue();
+	// For a live feed only the newest frame matters, skip everything that piled up while the previous frame was processed.
+	while (m_ImageQueue.Size() > 1)
+	{
+		m_ImageQueue.Dequeue();
+	}
+
+	// Don't block forever, the camera might have been stopped in the meantime.
+	cv::Mat frame;
+	if (!m_ImageQueue.TryDequeue(frame, 100))
+	{
+		*out_frame_size = 0;
+		*out_frame_width = 0;
+		*out_frame_height = 0;
+		return nullptr;
+	}
 
 	*out_frame_size = (uint32)(frame.total() * frame.elemSize());
 	*out_frame_width = frame.cols;
@@ -193,7 +204,13 @@ void Camera::Release()
 {
 	m_CameraRunning = false;
 	m_CameraStream.release();
-	cv::destroyAllWindows();
+
+	// Headless clients (no display) must not touch the window system.
+	if (m_WindowCreated)
+	{
+		cv::destroyAllWindows();
+		m_WindowCreated = false;
+	}
 }
 
 Byte *Camera::Show(uint32 frameIndex, uint32 *out_frame_size, uint32 *out_frame_width, uint32 *out_frame_height)
@@ -214,6 +231,7 @@ Byte *Camera::Show(uint32 frameIndex, uint32 *out_frame_size, uint32 *out_frame_
 	cv::Mat frame = m_ImageQueue.Get(frameIndex);
 	// Resizable window, which keeps the aspect ratio of the frame instead of stretching it.
 	cv::namedWindow("Frame", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
+	m_WindowCreated = true;
 	cv::imshow("Frame", frame);
 
 	*out_frame_size = (uint32)(frame.total() * frame.elemSize());
@@ -252,7 +270,14 @@ Byte *Camera::ShowLive(uint32 *out_frame_size, uint32 *out_frame_width, uint32 *
 		m_ImageQueue.Dequeue();
 	}
 
-	cv::Mat frame = m_ImageQueue.Dequeue();
+	cv::Mat frame;
+	if (!m_ImageQueue.TryDequeue(frame, 100))
+	{
+		*out_frame_size = 0;
+		*out_frame_width = 0;
+		*out_frame_height = 0;
+		return nullptr;
+	}
 
 	*out_frame_size = (uint32)(frame.total() * frame.elemSize());
 	*out_frame_width = frame.cols;
@@ -260,6 +285,7 @@ Byte *Camera::ShowLive(uint32 *out_frame_size, uint32 *out_frame_width, uint32 *
 
 	// Resizable window, which keeps the aspect ratio of the frame instead of stretching it.
 	cv::namedWindow("Frame", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
+	m_WindowCreated = true;
 	cv::imshow("Frame", frame);
 
 	char key = cv::waitKey(1);

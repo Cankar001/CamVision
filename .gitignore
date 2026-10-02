@@ -17,3 +17,7 @@ Makefile
 **.csproj
 **.csproj.user
 
+# Runtime logs and local settings
+logs/
+client.cfg
+server.cfg

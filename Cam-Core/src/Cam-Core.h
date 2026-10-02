@@ -10,6 +10,7 @@
 #include "Core/Crypto.h"
 #include "Core/Timer.h"
 #include "Core/Hash.h"
+#include "Core/Config.h"
 
 #include "Net/Net.h"
 

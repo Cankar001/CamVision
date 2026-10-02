@@ -2,6 +2,7 @@
 
 #include "Core.h"
 
+#include <chrono>
 #include <queue>
 #include <mutex>
 #include <condition_variable>
@@ -42,6 +43,24 @@ namespace Core
 			m_Queue.pop();
 			m_Size--;
 			return value;
+		}
+
+		/// <summary>
+		/// Like Dequeue, but gives up after the timeout, so callers can check for shutdown instead of blocking forever.
+		/// </summary>
+		/// <returns>Returns true, if a value was dequeued.</returns>
+		bool TryDequeue(T &out_value, uint32 timeout_ms)
+		{
+			std::unique_lock<std::mutex> lock(m_Mutex);
+			if (!m_Conditional.wait_for(lock, std::chrono::milliseconds(timeout_ms), [this] { return !m_Queue.empty(); }))
+			{
+				return false;
+			}
+
+			out_value = m_Queue.front();
+			m_Queue.pop();
+			m_Size--;
+			return true;
 		}
 
 		T Front()

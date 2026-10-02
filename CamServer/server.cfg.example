@@ -1,0 +1,15 @@
+# Copy this file to server.cfg (in the working directory of the server). Every setting can also be given as --key=value on the command line,
+# which overrides this file. Use --config=path to load a different file. Settings that are not set use the defaults shown here.
+
+# UDP port, on which the server listens.
+port = 45645
+
+# Minutes of video kept in memory per camera.
+backup_minutes = 5
+
+# Seconds without any message after which a client counts as gone (crashed, network down) and is removed, freeing its stored frames.
+# Connected clients send a heartbeat every second, so idle clients are not affected. 0 disables the timeout.
+client_timeout_seconds = 15
+
+# Shows a live preview window for every connected camera.
+preview = true

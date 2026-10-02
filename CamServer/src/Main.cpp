@@ -15,10 +15,20 @@ int main(int argc, char *argv[])
 	}
 
 	// Get current start directory from command line arguments
-	if (argc > 1)
+	// First argument without leading "--" will be the start directory (arguments with "--" are settings, see below)
+	int cwd_arg = 0;
+	for (int i = 1; i < argc; ++i)
 	{
-		// First argument will be the start directory
-		std::string selected_cwd = std::string(argv[1]);
+		if (std::string(argv[i]).rfind("--", 0) != 0)
+		{
+			cwd_arg = i;
+			break;
+		}
+	}
+
+	if (cwd_arg != 0)
+	{
+		std::string selected_cwd = std::string(argv[cwd_arg]);
 		cwd_success = Core::FileSystem::Get()->SetCurrentWorkingDirectory(selected_cwd);
 		if (cwd_success)
 		{
@@ -30,13 +40,29 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	// Settings come from server.cfg (in the working directory, or --config=path) and can be overridden with --key=value arguments.
+	Core::Config settings(argc, argv, "server.cfg");
+
 	ServerConfig config;
-	config.ServerIP = "127.0.0.1";
-	config.Port = 45645;
-	config.VideoBackupDuration = 5;
+	config.Port = (uint16)settings.GetInt("port", config.Port);
+	config.VideoBackupDuration = (uint32)std::max(settings.GetInt("backup_minutes", config.VideoBackupDuration), 1);
+	config.ShowPreview = settings.GetBool("preview", config.ShowPreview);
+	config.ClientTimeoutSeconds = (uint32)std::max(settings.GetInt("client_timeout_seconds", config.ClientTimeoutSeconds), 0);
+
+	if (!settings.LoadedFile().empty())
+	{
+		CAM_LOG_INFO("Loaded settings from {}", settings.LoadedFile());
+	}
+	else
+	{
+		CAM_LOG_INFO("No server.cfg found in the working directory, using defaults and command line arguments.");
+	}
 
 	Server s(config);
-	s.StartFramePreviews();
+	if (config.ShowPreview)
+	{
+		s.StartFramePreviews();
+	}
 	s.Run();
 
 	Core::Shutdown();

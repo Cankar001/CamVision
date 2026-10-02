@@ -4,11 +4,27 @@
 
 #include <opencv2/opencv.hpp>
 
+struct CameraConfig
+{
+	/// <summary>
+	/// The index of the camera as enumerated by the operating system (backend specific order, e.g. DirectShow device list on Windows).
+	/// </summary>
+	int32 Index = 0;
+
+	/// <summary>
+	/// The requested frame size. If one of them is 0, the default size of the camera is used.
+	/// </summary>
+	uint32 Width = 1280;
+	uint32 Height = 720;
+
+	bool FlipImage = false;
+};
+
 class Camera
 {
 public:
 
-	Camera(bool flipImage, uint32 width = 0, uint32 height = 0);
+	Camera(const CameraConfig &config);
 	~Camera();
 
 	/// <summary>
@@ -115,6 +131,7 @@ private:
 
 private:
 
+	int32 m_Index = 0;
 	uint32 m_Width = 0;
 	uint32 m_Height = 0;
 	uint32 m_FrameCount = 0;
@@ -123,6 +140,7 @@ private:
 	float m_Scale = 1.0f;
 
 	bool m_CameraRunning = true;
+	bool m_WindowCreated = false;
 
 	bool m_TouchedZoom = false;
 	float m_CenterX = 0, m_CenterY = 0;
