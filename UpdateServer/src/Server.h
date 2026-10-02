@@ -37,6 +37,12 @@ struct ServerConfig
 	uint32 Version = 0;
 
 	/// <summary>
+	/// The maximum speed in KB/s, with which an update is sent to a single client. The clients request what they need, the server drops requests over this limit.
+	/// 0 means no limit.
+	/// </summary>
+	uint32 ClientSpeedLimitKB = 10000;
+
+	/// <summary>
 	/// the path to the public key
 	/// </summary>
 	std::string PublicKeyPath;

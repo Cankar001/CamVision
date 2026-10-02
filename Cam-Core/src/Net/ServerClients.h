@@ -25,13 +25,29 @@ namespace Core
 			bool IsBandwidthAvailable(int64 now_ms);
 
 		protected:
-			// Rate to decrease bandwidth usage, bytes/ms.
-			// Best set to a fraction of your maximum expected speed and to increase max_bandwidth instead.
-			static constexpr int64 DECREASE_RATE = 100;
+			friend class Clients;
 
-			// Maximum expected bandwidth to transfer, bytes.
-			static constexpr uint32 MAX_BANDWIDTH = 2000000;
+			// Rate to decrease bandwidth usage, bytes/ms (the speed limit per client, 1000 bytes/ms are 1 MB/s).
+			static inline int64 s_DecreaseRate = 10000;
+
+			// Maximum bandwidth to transfer at once, bytes: the burst, which is allowed before the speed limit applies.
+			static inline uint32 s_MaxBandwidth = 2500000;
+
+			// No speed limit at all.
+			static inline bool s_Unlimited = false;
 		};
+
+		/// <summary>
+		/// Sets the maximum speed, with which data is sent to a single client, in bytes per second. Applies to all clients. 0 means no limit.
+		/// </summary>
+		static void SetSpeedLimit(uint32 bytes_per_second)
+		{
+			Node::s_Unlimited = (bytes_per_second == 0);
+			Node::s_DecreaseRate = bytes_per_second / 1000 > 0 ? bytes_per_second / 1000 : 1;
+
+			// The burst is a quarter of a second, but at least 256 KB. Larger bursts could overflow the receive buffer of the client.
+			Node::s_MaxBandwidth = bytes_per_second / 4 > 262144 ? bytes_per_second / 4 : 262144;
+		}
 
 		// Initializes the clients table.
 		Clients();

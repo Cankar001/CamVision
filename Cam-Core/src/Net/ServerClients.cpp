@@ -16,7 +16,7 @@ namespace Core
 
 		if (decrease > 0)
 		{
-			decrease *= DECREASE_RATE; // bytes/ms
+			decrease *= s_DecreaseRate; // bytes/ms
 
 			if ((int64)Bandwidth > decrease)
 			{
@@ -28,7 +28,7 @@ namespace Core
 			}
 		}
 
-		return (Bandwidth < MAX_BANDWIDTH);
+		return s_Unlimited || (Bandwidth < s_MaxBandwidth);
 	}
 
 	Clients::Clients()

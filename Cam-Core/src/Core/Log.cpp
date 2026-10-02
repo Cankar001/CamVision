@@ -7,9 +7,23 @@
 namespace Core
 {
 	static std::shared_ptr<spdlog::logger> s_Logger;
+	static bool s_Silent = false;
+
+	void Logger::SetSilent(bool silent)
+	{
+		s_Silent = silent;
+	}
 
 	Logger::Logger()
 	{
+		if (s_Silent)
+		{
+			// No sinks: nothing is printed and the log file is not touched.
+			s_Logger = std::make_shared<spdlog::logger>("App");
+			s_Logger->set_level(spdlog::level::off);
+			return;
+		}
+
 		spdlog::sink_ptr console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
 		console_sink->set_pattern("%^[%T] %n: %v%$");
 		

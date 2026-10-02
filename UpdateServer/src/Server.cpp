@@ -23,6 +23,7 @@ Server::Server(const ServerConfig &config)
 	m_Crypto = Core::Crypto::Create();
 	m_IPTable = new Core::IPTable();
 	m_Clients = new Core::Clients(m_Crypto, m_IPTable);
+	Core::Clients::SetSpeedLimit(m_Config.ClientSpeedLimitKB * 1000);
 
 	m_LocalVersion = ResolveVersion();
 	if (m_LocalVersion == 0)
@@ -38,6 +39,7 @@ Server::Server(const ServerConfig &config)
 	CAM_LOG_INFO("Public key path       : {}", config.PublicKeyPath);
 	CAM_LOG_INFO("IP                    : {}", config.ServerIP);
 	CAM_LOG_INFO("Port                  : {}", config.ServerPort);
+	CAM_LOG_INFO("Speed limit per client: {}", config.ClientSpeedLimitKB == 0 ? std::string("none") : std::to_string(config.ClientSpeedLimitKB) + " KB/s");
 	CAM_LOG_INFO("Signature path        : {}", config.SignaturePath);
 	CAM_LOG_INFO("Target binary path    : {}", config.TargetBinaryPath);
 	CAM_LOG_INFO("Target source path    : {}", config.TargetSourcePath);
@@ -74,6 +76,9 @@ void Server::Run()
 	for (;;)
 	{
 		m_Socket->Open();
+
+		// Many clients request pieces at the same time, the requests must not get lost, because the socket buffer is full.
+		m_Socket->SetBufferSizes(4 * 1024 * 1024, 4 * 1024 * 1024);
 
 		if (!m_Socket->Bind(m_Config.ServerPort))
 		{
@@ -705,21 +710,13 @@ bool Server::Step()
 		res.PiecePos = msg->PiecePos;
 		res.PieceSize = (uint16)Core::utils::Min<uint32>(m_UpdateFile.Size - msg->PiecePos, PIECE_BYTES);
 
-		char* send_buf = (char*)malloc(sizeof(res) + res.PieceSize);
-		if (!send_buf)
-		{
-			CAM_LOG_ERROR("Failed to allocate enough space for the update package!");
-			return true;
-		}
-
+		// A piece is never larger than PIECE_BYTES, so no allocation is needed for every piece.
+		char send_buf[sizeof(ServerUpdatePieceMessage) + PIECE_BYTES];
 		memcpy(send_buf, &res, sizeof(res));
 		memcpy(send_buf + sizeof(res), m_UpdateFile.Data + msg->PiecePos, res.PieceSize);
 
 		uint32 send_bytes = sizeof(res) + res.PieceSize;
 		m_Socket->Send(send_buf, send_bytes, addr);
-
-		free(send_buf);
-		send_buf = nullptr;
 		client->Bandwidth += send_bytes;
 	}
 	else if (header->Type == MessageType::CLIENT_REQUEST_VERSION)

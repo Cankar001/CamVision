@@ -5,7 +5,7 @@
 
 /// <summary>
 /// Settings come from update_server.cfg (in the working directory, or --config=path) and can be overridden with --key=value arguments:
-///   port, source_path, binary_path, public_key_path, private_key_path, signature_path, version, regenerate_keys
+///   port, source_path, binary_path, public_key_path, private_key_path, signature_path, version, regenerate_keys, client_speed_limit_kb
 /// </summary>
 int main(int argc, char *argv[])
 {
@@ -25,6 +25,7 @@ int main(int argc, char *argv[])
 	ServerConfig config;
 	config.ServerPort = (uint16)settings.GetInt("port", config.ServerPort);
 	config.Version = (uint32)std::max(settings.GetInt("version", 0), 0);
+	config.ClientSpeedLimitKB = (uint32)std::max(settings.GetInt("client_speed_limit_kb", config.ClientSpeedLimitKB), 0);
 	config.TargetSourcePath = settings.GetString("source_path", "../CamClient");
 	config.TargetBinaryPath = settings.GetString("binary_path", default_binary_path);
 	config.PublicKeyPath = settings.GetString("public_key_path", "../CamClient/public_key.key");

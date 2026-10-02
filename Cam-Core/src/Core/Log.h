@@ -18,6 +18,12 @@ namespace Core
 
 		static Logger *Get();
 
+		/// <summary>
+		/// Turns all logging off: nothing is printed and no log file is created. Programs, whose output is read by other programs, use this.
+		/// Must be called, before anything is logged for the first time.
+		/// </summary>
+		static void SetSilent(bool silent);
+
 		std::shared_ptr<spdlog::logger> &GetLogger();
 	};
 }

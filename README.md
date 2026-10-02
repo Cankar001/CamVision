@@ -159,6 +159,18 @@ The update server ships new camera client builds to the devices:
 
 Clients only update, when the version **differs** from their installed version, so every new set of binaries needs a new version. The server takes the version from (in this order): the `version` setting, a `version.txt` in the binary folder (a number, shipped together with the binaries, so the folder can be exchanged on a server without any source code), or `CAM_VERSION` in `CamClient/src/CamVersion.h`. The server warns, if the files changed but the version did not. If the server is started before the binaries exist, it waits for them, and tells the clients meanwhile that they are up to date.
 
+**Download speed:** the client keeps a window of 2048 pieces (2 MB) in flight and requests new pieces as soon as others arrive, so the speed adapts to the network (it does not flood a slow link, and it is fast on a fast one). It does not request a piece again for one second, and shows its progress once per second. The server limits the speed per client (`client_speed_limit_kb` in `update_server.cfg`, default 10000 KB/s, `0` = no limit). A 70 MB update takes about 12 seconds in a debug build on one machine, and about 10 seconds at the 10 MB/s limit on a real network. Lower the limit to protect a slow network or if many clients update at once.
+
+**Checking for an update without installing it:** `UpdateClient --query-version` asks the update server for its version, prints just that number to the console and quits. Nothing else is printed (no log lines, no log file is written), and nothing is downloaded, installed, started or cleaned up. A program like the camera client can run it and compare the result with its own version:
+
+```shell
+UpdateClient --query-version              # prints e.g. 101
+```
+
+- Exit code `0`: the version was printed. Exit code `1`: the server did not answer (nothing on stdout, the reason is printed to stderr).
+- If the server has no update to offer (it is empty or has no binaries yet), it answers with the client's own version, so "printed version differs from my version" always means that an update is available.
+- `--query-timeout=SECONDS` changes how long to wait for the server (default 5). The other settings (`--server_ip`, `--server_port`, ...) work as usual.
+
 The signing keys are created once by the update server (`public_key_path` and `private_key_path` in `update_server.cfg`) and reused for all updates. **The client pins the public key:** the first update is verified with the key from the server and the key is stored in the client's `public_key_path`, all later updates must be signed with the same key. For devices in the field it is safer to copy the server's public key file to the device before the first start. If you replace the signing key on purpose (`regenerate_keys = true`), delete the pinned key file on all clients.
 
 The settings are explained in [UpdateServer/update_server.cfg.example](UpdateServer/update_server.cfg.example) and [UpdateClient/update_client.cfg.example](UpdateClient/update_client.cfg.example). The update server reads `update_server.cfg` and the update client `update_client.cfg` from the folder, in which they are started (the `UpdateServer` / `UpdateClient` project folder, if started from a build folder, like the other programs).

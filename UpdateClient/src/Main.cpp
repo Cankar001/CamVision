@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <iostream>
 
 #include "Client.h"
@@ -10,19 +11,36 @@
 ///
 /// Settings come from update_client.cfg (in the working directory, or --config=path) and can be overridden with --key=value arguments:
 ///   server_ip, server_port, target_path, install_path, fallback_path, public_key_path
+///
+/// With --query-version, the client only asks the update server for its version, prints it (just the number, nothing else) and quits, without
+/// downloading, installing or starting anything. Exit code 0: the version was printed. Exit code 1: the server did not answer (nothing is printed
+/// to stdout, the reason goes to stderr). If the server has no update to offer, the own version is printed, so "printed version differs from my
+/// version" tells a program (like the camera client), that an update is available. --query-timeout=SECONDS changes how long to wait (default 5).
 /// </summary>
 /// <param name="argc"></param>
 /// <param name="argv"></param>
 /// <returns></returns>
 int main(int argc, char *argv[])
 {
+	// The query mode must print nothing but the version, so it is detected first, before anything is logged or printed.
+	// It is a command line flag only (the settings file needs the working directory, which is set below).
+	Core::Config arguments(argc, argv, "");
+	bool query_version = arguments.GetBool("query_version", false);
+	if (query_version)
+	{
+		Core::Logger::SetSilent(true);
+	}
+
 	Core::Init();
 
 	// Set the current working directory
 	std::string cwd = "";
 	Core::FileSystem::Get()->SetCurrentWorkingDirectory("../../../");
 	Core::FileSystem::Get()->GetCurrentWorkingDirectory(&cwd);
-	std::cout << "Current CWD: " << cwd.c_str() << std::endl;
+	if (!query_version)
+	{
+		std::cout << "Current CWD: " << cwd.c_str() << std::endl;
+	}
 
 	Core::Config settings(argc, argv, "update_client.cfg");
 
@@ -49,6 +67,27 @@ int main(int argc, char *argv[])
 	else
 	{
 		CAM_LOG_INFO("No update_client.cfg found in the working directory, using defaults and command line arguments.");
+	}
+
+	if (query_version)
+	{
+		// Nothing is changed in this mode: no leftover is removed, nothing is downloaded, installed or started.
+		uint32 timeout_seconds = (uint32)std::max(settings.GetInt("query_timeout", 5), 1);
+		Client c(config);
+
+		uint32 version = 0;
+		bool answered = c.QueryServerVersion(&version, timeout_seconds * 1000);
+		if (answered)
+		{
+			std::cout << version << std::endl;
+		}
+		else
+		{
+			std::cerr << "The update server " << config.ServerIP << ":" << config.Port << " did not answer." << std::endl;
+		}
+
+		Core::Shutdown();
+		return answered ? 0 : 1;
 	}
 
 	// An update.zip, which is left over from a run that did not finish, must not block the next update.

@@ -3,6 +3,7 @@
 #include <Cam-Core.h>
 
 #include <string>
+#include <vector>
 
 #include "Message.h"
 
@@ -95,6 +96,14 @@ public:
 	~Client();
 
 	void RequestServerVersion();
+
+	/// <summary>
+	/// Asks the update server for its version and returns it, without downloading or installing anything.
+	/// </summary>
+	/// <param name="out_version">Receives the version, which the server offers (the own version, if the server has no update).</param>
+	/// <param name="timeout_ms">How long to wait for the answer. The request is repeated, as the datagram might get lost.</param>
+	/// <returns>Returns true, if the server answered.</returns>
+	bool QueryServerVersion(uint32 *out_version, uint32 timeout_ms);
 	void Run();
 	void Reset();
 
@@ -119,7 +128,15 @@ private:
 
 private:
 
-	static constexpr uint32 MAX_REQUESTS = 32;
+	// Number of pieces, which are requested but not received yet (the window). New pieces are requested, whenever pieces arrive, so the speed adapts
+	// to the network: a fast network has a short round trip and gets many pieces per second, a slow one is not flooded. 2048 pieces are 2 MB.
+	static constexpr uint32 REQUEST_WINDOW = 2048;
+
+	// Maximum number of requests per request interval (new pieces and repeated ones).
+	static constexpr uint32 MAX_REQUESTS = 1024;
+
+	// A piece, which was requested, is not requested again for this time, its answer is probably on its way (otherwise every piece is received many times).
+	static constexpr int64 PIECE_RETRY_MS = 1000;
 
 	ClientConfig m_Config;
 	Core::Socket *m_Socket = nullptr;
@@ -128,6 +145,13 @@ private:
 
 	Core::Buffer m_UpdateData;
 	Core::Buffer m_UpdatePieces;
+
+	// The time of the last request of every piece.
+	std::vector<int64> m_PieceRequestMS;
+
+	// Number of pieces, which were requested, but not received yet.
+	uint32 m_InFlight = 0;
+	int64 m_LastProgressLogMS = 0;
 
 	int64 m_LastUpdateMS = 0;
 	int64 m_LastPieceMS = 0;

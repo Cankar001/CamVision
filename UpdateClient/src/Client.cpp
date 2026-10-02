@@ -1,6 +1,7 @@
 #include "Client.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <assert.h>
@@ -74,6 +75,9 @@ Client::Client(const ClientConfig &config)
 		CAM_LOG_ERROR("Socket could not be set to non-blocking!");
 	}
 
+	// Pieces arrive in bursts, a larger buffer keeps them from getting lost, while they wait to be processed.
+	m_Socket->SetBufferSizes(1024 * 1024, 4 * 1024 * 1024);
+
 	m_Host = m_Socket->Lookup(m_Config.ServerIP, m_Config.Port);
 	Reset();
 }
@@ -103,6 +107,55 @@ void Client::RequestServerVersion()
 	}
 
 	m_Status.Code = ClientStatusCode::NONE;
+}
+
+bool Client::QueryServerVersion(uint32 *out_version, uint32 timeout_ms)
+{
+	using Clock = std::chrono::steady_clock;
+	auto elapsed_ms = [](Clock::time_point t) { return (int64)std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t).count(); };
+
+	ClientWantsVersionMessage request = {};
+	request.LocalVersion = m_LocalVersion;
+	request.ClientVersion = 0;
+	request.Header.Type = MessageType::CLIENT_REQUEST_VERSION;
+	request.Header.Version = m_LocalVersion;
+
+	static Byte BUF[65536];
+	Clock::time_point start = Clock::now();
+	Clock::time_point last_request = start - std::chrono::milliseconds(1000);
+	while (elapsed_ms(start) < (int64)timeout_ms)
+	{
+		// The request (or the answer) might get lost, so it is repeated until the server answers.
+		if (elapsed_ms(last_request) >= 500)
+		{
+			m_Socket->Send(&request, sizeof(request), m_Host);
+			last_request = Clock::now();
+		}
+
+		Core::addr_t addr = {};
+		int32 len = m_Socket->Recv(BUF, sizeof(BUF), &addr);
+		if (len <= 0)
+		{
+			Core::SleepMS(10);
+			continue;
+		}
+
+		if (addr.Value != m_Host.Value || len != sizeof(ServerVersionInfoMessage))
+		{
+			continue;
+		}
+
+		header_t *header = (header_t *)BUF;
+		if (header->Type != MessageType::SERVER_RECEIVE_VERSION)
+		{
+			continue;
+		}
+
+		*out_version = ((ServerVersionInfoMessage *)BUF)->Version;
+		return true;
+	}
+
+	return false;
 }
 
 void Client::Run()
@@ -329,7 +382,7 @@ void Client::MessageLoop()
 			if (len != sizeof(ServerVersionInfoMessage))
 			{
 				CAM_LOG_ERROR("Unexpected network message size!");
-				return;
+				continue;
 			}
 
 			ServerVersionInfoMessage *msg = (ServerVersionInfoMessage *)BUF;
@@ -357,7 +410,7 @@ void Client::MessageLoop()
 					if (received_key.Size == 0 || received_key.Size > sizeof(received_key.Data))
 					{
 						CAM_LOG_ERROR("The server sent an invalid public key size: {}", msg->PublicKey.Size);
-						return;
+						continue;
 					}
 
 					m_Config.PublicKey = received_key;
@@ -383,7 +436,7 @@ void Client::MessageLoop()
 			if (len != sizeof(ServerUpdateBeginMessage))
 			{
 				CAM_LOG_ERROR("Received wrong package size");
-				return;
+				continue;
 			}
 
 			ServerUpdateBeginMessage *msg = (ServerUpdateBeginMessage *)BUF;
@@ -392,22 +445,25 @@ void Client::MessageLoop()
 			if (msg->UpdateSize == 0 || msg->UpdateSize >= (200 * 1024 * 1024))
 			{
 				CAM_LOG_ERROR("Update size was very unrealistic! Size: {}", msg->UpdateSize);
-				return;
+				continue;
 			}
 
 			// Allocate space for update data.
 			if (!m_UpdateData.Alloc(msg->UpdateSize))
 			{
 				CAM_LOG_ERROR("Could not allocated enough space for update!");
-				return;
+				continue;
 			}
 
 			// Allocate space for the piece tracker table.
 			if (!m_UpdatePieces.Alloc((msg->UpdateSize + PIECE_BYTES - 1) / PIECE_BYTES))
 			{
 				CAM_LOG_ERROR("Could not allocated enough space for update!");
-				return;
+				continue;
 			}
+
+			m_PieceRequestMS.assign(m_UpdatePieces.Size, 0);
+			m_InFlight = 0;
 
 			memcpy(&m_UpdateSignature, &msg->UpdateSignature, sizeof(Signature));
 			CAM_LOG_DEBUG("Received update begin request, total size: {}", msg->UpdateSize);
@@ -423,7 +479,7 @@ void Client::MessageLoop()
 			if (!m_IsUpdating)
 			{
 				CAM_LOG_ERROR("Invalid state! The update is not in progress.");
-				return;
+				continue;
 			}
 
 			ServerUpdatePieceMessage *msg = (ServerUpdatePieceMessage *)BUF;
@@ -432,35 +488,35 @@ void Client::MessageLoop()
 			if (msg->ClientToken != m_ClientToken || msg->ServerToken != m_ServerToken)
 			{
 				CAM_LOG_ERROR("Client or server token did not match!");
-				return;
+				continue;
 			}
 
 			// Verify that the message piece size is valid.
 			if (msg->PieceSize > PIECE_BYTES)
 			{
 				CAM_LOG_ERROR("Unexpected message piece size! Expected {0}, but got {1}", PIECE_BYTES, msg->PieceSize);
-				return;
+				continue;
 			}
 
 			// Verify that the message contains the full piece data.
 			if (len != (sizeof(ServerUpdatePieceMessage) + msg->PieceSize))
 			{
 				CAM_LOG_ERROR("The network package has not the expected size!");
-				return;
+				continue;
 			}
 
 			// Verify that the position is on a piece boundry and something we actually requested.
 			if ((msg->PiecePos % PIECE_BYTES) != 0)
 			{
 				CAM_LOG_ERROR("The piece position {0} is not on a piece boundary of {1} bytes!", msg->PiecePos, PIECE_BYTES);
-				return;
+				continue;
 			}
 
 			// Verify that the data doesn't write outside the buffer.
 			if (msg->PiecePos + msg->PieceSize > m_UpdateData.Size)
 			{
 				CAM_LOG_ERROR("The piece pos offset is larger than the update size!");
-				return;
+				continue;
 			}
 
 			// Verify the piece position.
@@ -468,15 +524,14 @@ void Client::MessageLoop()
 			if (idx >= m_UpdatePieces.Size)
 			{
 				CAM_LOG_ERROR("The piece index is larger than the update size!");
-				return;
+				continue;
 			}
 
 			// Verify that we need the piece.
 			if (m_UpdatePieces.Ptr[idx])
 			{
-				// Happens, if a piece was requested again, while the first answer was still on its way. Not an error.
-				CAM_LOG_DEBUG("Received piece {} twice, ignoring it.", idx);
-				return;
+				// Happens, if a piece was requested again, while the first answer was still on its way. Not an error, and too frequent to log.
+				continue;
 			}
 
 			// Validate that the piece size aligns with how we request data.
@@ -485,7 +540,7 @@ void Client::MessageLoop()
 				if (msg->PieceSize != PIECE_BYTES)
 				{
 					CAM_LOG_ERROR("Piece {0} has the size {1}, but only the last piece may be smaller than {2} bytes!", idx, msg->PieceSize, PIECE_BYTES);
-					return;
+					continue;
 				}
 			}
 
@@ -493,20 +548,26 @@ void Client::MessageLoop()
 			memcpy(m_UpdateData.Ptr + msg->PiecePos, BUF + sizeof(ServerUpdatePieceMessage), msg->PieceSize);
 			m_UpdatePieces.Ptr[idx] = 1;
 			m_Status.Bytes += msg->PieceSize;
+
+			// The piece is not in flight anymore, there is room in the window for the next one.
+			if (m_PieceRequestMS[idx] != 0 && m_InFlight > 0)
+			{
+				--m_InFlight;
+			}
 		}
 		else if (header->Type == MessageType::SERVER_UPDATE_TOKEN)
 		{
 			if (len != sizeof(ServerUpdateTokenMessage))
 			{
 				CAM_LOG_ERROR("The token message has the size {0}, but {1} was expected!", len, sizeof(ServerUpdateTokenMessage));
-				return;
+				continue;
 			}
 
 			ServerUpdateTokenMessage *msg = (ServerUpdateTokenMessage *)BUF;
 			if (msg->ClientToken != m_ClientToken)
 			{
 				CAM_LOG_ERROR("Client tokens did not match!");
-				return;
+				continue;
 			}
 
 			CAM_LOG_INFO("Received new server token: {}", msg->ServerToken);
@@ -595,6 +656,8 @@ void Client::Reset()
 {
 	m_UpdateData.Free();
 	m_UpdatePieces.Free();
+	m_PieceRequestMS.clear();
+	m_InFlight = 0;
 
 	m_IsFinished = true;
 	m_IsUpdating = false;
@@ -635,7 +698,12 @@ void Client::UpdateProgress(int64 now_ms, Core::addr_t addr)
 	}
 
 	// We are updating
-	CAM_LOG_DEBUG("Loading update: {0} / {1}", m_UpdateIdx, m_UpdateData.Size);
+	if (now_ms - m_LastProgressLogMS >= 1000)
+	{
+		m_LastProgressLogMS = now_ms;
+		CAM_LOG_INFO("Downloading update: {0:.1f} / {1:.1f} MB ({2}%)", m_Status.Bytes / 1048576.0, m_Status.Total / 1048576.0, m_Status.Total ? (uint64)m_Status.Bytes * 100 / m_Status.Total : 0);
+	}
+
 	if (m_UpdateIdx >= m_UpdatePieces.Size)
 	{
 		if (m_Crypto->TestSignature(m_UpdateSignature.Data, SIG_BYTES, m_UpdateData.Ptr, m_UpdateData.Size, m_Config.PublicKey.Data, m_Config.PublicKey.Size))
@@ -693,11 +761,10 @@ void Client::UpdateProgress(int64 now_ms, Core::addr_t addr)
 	}
 
 	// Update in progress, request pieces.
-	if (now_ms - m_LastPieceMS >= 100)
+	if (now_ms - m_LastPieceMS >= 10)
 	{
 		m_LastPieceMS = now_ms;
 
-		CAM_LOG_DEBUG("Sending update piece request...");
 		ClientUpdatePieceMessage msg = {};
 		msg.Header.Version = m_LocalVersion;
 		msg.Header.Type = MessageType::CLIENT_UPDATE_PIECE;
@@ -705,42 +772,62 @@ void Client::UpdateProgress(int64 now_ms, Core::addr_t addr)
 		msg.ServerToken = m_ServerToken;
 
 		bool found_missing = false;
-		uint32 end_idx = 0;
-		uint32 num_pieces = 0;
+		uint32 first_missing = 0;
+		uint32 num_requests = 0;
 
-		// Request missing piecees.
 		for (uint32 idx = m_UpdateIdx, end = m_UpdatePieces.Size; idx < end; ++idx)
 		{
-			if (!m_UpdatePieces.Ptr[idx])
+			if (m_UpdatePieces.Ptr[idx])
 			{
-				// Keep track of the last valid idx.
-				if (!found_missing)
+				continue;
+			}
+
+			// Keep track of the first piece, which is still missing.
+			if (!found_missing)
+			{
+				found_missing = true;
+				first_missing = idx;
+			}
+
+			if (m_PieceRequestMS[idx] != 0)
+			{
+				// Requested before. Only if the answer did not arrive in time (the request or the answer got lost, or the server dropped it), it is requested again.
+				// It is still counted as in flight, so this does not use up room of the window.
+				if (now_ms - m_PieceRequestMS[idx] < PIECE_RETRY_MS)
 				{
-					found_missing = true;
-					end_idx = idx;
+					continue;
 				}
-
-				msg.PiecePos = idx * PIECE_BYTES;
-				m_Socket->Send(&msg, sizeof(msg), m_Host);
-
-				num_pieces += 1;
-				if (num_pieces > MAX_REQUESTS)
+			}
+			else
+			{
+				// A new piece, which needs room in the window.
+				if (m_InFlight >= REQUEST_WINDOW)
 				{
-					// Don't send too many.
 					break;
 				}
+
+				++m_InFlight;
+			}
+
+			msg.PiecePos = idx * PIECE_BYTES;
+			m_Socket->Send(&msg, sizeof(msg), m_Host);
+			m_PieceRequestMS[idx] = now_ms;
+
+			if (++num_requests >= MAX_REQUESTS)
+			{
+				break;
 			}
 		}
 
-		if (end_idx > m_UpdateIdx)
+		if (found_missing)
 		{
-			m_UpdateIdx = end_idx;
+			m_UpdateIdx = first_missing;
 		}
-
-		if (!found_missing)
+		else
 		{
+			// Nothing is missing anymore, the next call checks the signature.
 			m_UpdateIdx = m_UpdatePieces.Size;
-			CAM_LOG_INFO("Requested all update pieces successfully.");
+			CAM_LOG_INFO("Received all update pieces successfully.");
 		}
 	}
 }
