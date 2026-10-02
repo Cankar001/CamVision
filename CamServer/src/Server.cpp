@@ -1,10 +1,19 @@
 #include "Server.h"
 
+#include <algorithm>
+#include <cstring>
 #include <iostream>
+#include <unordered_set>
 
 #include "Messages.h"
 
 #include "Core/Log.h"
+
+// Size of the kernel receive buffer. Large enough to hold a burst of datagrams for several frames of multiple clients.
+#define SOCKET_BUFFER_SIZE (8 * 1024 * 1024)
+
+// Upper limit for the frames per second a client may announce, to keep the ring buffer size sane.
+#define MAX_CLIENT_FPS 120
 
 Server::Server(const ServerConfig &config)
 	: m_Config(config)
@@ -31,13 +40,7 @@ Server::~Server()
 		m_FramePreviewThread.join();
 	}
 
-	for (uint32 i = 0; i < m_Clients.size(); ++i)
-	{
-		m_Clients[i].Frames.Clear();
-	}
-
 	m_Clients.clear();
-	m_Clients.shrink_to_fit();
 
 	delete m_Socket;
 	m_Socket = nullptr;
@@ -54,6 +57,11 @@ void Server::Run()
 		{
 			CAM_LOG_ERROR("Could not open socket!");
 			break;
+		}
+
+		if (!m_Socket->SetBufferSizes(SOCKET_BUFFER_SIZE, SOCKET_BUFFER_SIZE))
+		{
+			CAM_LOG_ERROR("Could not set socket buffer sizes, frames might get dropped!");
 		}
 
 		if (!m_Socket->Bind(m_Config.Port))
@@ -113,11 +121,17 @@ bool Server::Step()
 			break;
 
 		case CLIENT_FRAME:
-			message_success = OnClientFrame(addr, BUF, len);
+			message_success = OnClientFrameChunk(addr, BUF, len);
 			break;
 	}
 
-	return message_success;
+	if (!message_success)
+	{
+		CAM_LOG_DEBUG("Ignored invalid message of type {}.", header->Type);
+	}
+
+	// A single malformed datagram must not tear down the socket, only socket errors do.
+	return true;
 }
 
 bool Server::OnClientConnected(Core::addr_t &clientAddr, Byte *message, int32 addrLen)
@@ -138,30 +152,36 @@ bool Server::OnClientConnected(Core::addr_t &clientAddr, Byte *message, int32 ad
 	CAM_LOG_DEBUG("Client {} tries to connect!", clientAddr.Value);
 	ClientConnectionStartMessage *msg = (ClientConnectionStartMessage *)message;
 
-	bool client_connected = false;
-	auto it = std::find(m_Clients.begin(), m_Clients.end(), clientAddr);
-	if (it == m_Clients.end())
+	// The name comes from the network, make sure it is terminated.
+	char name[MAX_FRAME_NAME_LENGTH];
+	memcpy(name, msg->FrameName, MAX_FRAME_NAME_LENGTH);
+	name[MAX_FRAME_NAME_LENGTH - 1] = 0;
+
 	{
-		// No client registered yet
+		std::lock_guard<std::mutex> lock(m_ClientsMutex);
+		if (!FindClient(clientAddr))
+		{
+			// No client registered yet
 
-		// Calculate the buffer size for X minutes
-		uint32 fps = msg->FPS;
-		uint32 minutes = m_Config.VideoBackupDuration;
-		uint32 seconds = minutes * 60;
-		uint32 frames = seconds * fps;
-		CAM_LOG_DEBUG("Calculated frame count {0} for {1} minutes with {2} fps.", frames, minutes, fps);
+			// Calculate the buffer size for X minutes
+			uint32 fps = std::clamp<uint32>(msg->FPS, 1, MAX_CLIENT_FPS);
+			uint32 minutes = m_Config.VideoBackupDuration;
+			uint32 seconds = minutes * 60;
+			uint32 frames = std::max<uint32>(seconds * fps, 1);
+			CAM_LOG_DEBUG("Calculated frame count {0} for {1} minutes with {2} fps.", frames, minutes, fps);
 
-		ClientEntry client(frames * sizeof(cv::Mat));
-		client.Address = clientAddr;
-		client.FrameTitle = msg->FrameName;
-		m_Clients.push_back(client);
-		client_connected = true;
+			auto client = std::make_unique<ClientEntry>(frames);
+			client->Address = clientAddr;
+			client->FrameTitle = name;
+			m_Clients.push_back(std::move(client));
+		}
 	}
 
+	// A repeated request from an already registered client (e.g. our response got lost) is accepted as well.
 	ServerConnectionStartResponse response = {};
 	response.Header.Type = SERVER_CONNECTION_START;
 	response.Header.Version = m_Version;
-	response.ConnectionAccepted = client_connected;
+	response.ConnectionAccepted = true;
 	m_Socket->Send(&response, sizeof(response), clientAddr);
 
 	CAM_LOG_INFO("Client {} connected successfully!", clientAddr.Value);
@@ -187,14 +207,15 @@ bool Server::OnClientDisconnected(Core::addr_t &clientAddr, Byte *message, int32
 	ClientConnectionCloseMessage *msg = (ClientConnectionCloseMessage *)message;
 
 	bool client_removed = false;
-	auto it = std::find(m_Clients.begin(), m_Clients.end(), clientAddr);
-	if (it != m_Clients.end())
 	{
-		// Client was found, clear the entry
-		it->Frames.Clear();
-
-		m_Clients.erase(it);
-		client_removed = true;
+		std::lock_guard<std::mutex> lock(m_ClientsMutex);
+		auto it = std::find_if(m_Clients.begin(), m_Clients.end(), [&](const auto &c) { return c->Address.Value == clientAddr.Value; });
+		if (it != m_Clients.end())
+		{
+			// Client was found, remove the entry (this releases all of its frames)
+			m_Clients.erase(it);
+			client_removed = true;
+		}
 	}
 
 	ServerConnectionCloseResponse response = {};
@@ -207,96 +228,168 @@ bool Server::OnClientDisconnected(Core::addr_t &clientAddr, Byte *message, int32
 	return true;
 }
 
-bool Server::OnClientFrame(Core::addr_t &clientAddr, Byte *message, int32 addrLen)
+ClientEntry *Server::FindClient(const Core::addr_t &clientAddr)
 {
-	header_t *header = (header_t *)message;
-	if (header->Version != m_Version)
+	for (auto &client : m_Clients)
+	{
+		if (client->Address.Value == clientAddr.Value)
+		{
+			return client.get();
+		}
+	}
+
+	return nullptr;
+}
+
+bool Server::OnClientFrameChunk(Core::addr_t &clientAddr, Byte *message, int32 addrLen)
+{
+	if (addrLen < (int32)sizeof(ClientFrameChunkMessage))
+	{
+		CAM_LOG_ERROR("Frame chunk is too small!");
+		return false;
+	}
+
+	ClientFrameChunkMessage *chunk = (ClientFrameChunkMessage *)message;
+	if (chunk->Header.Version != m_Version)
 	{
 		CAM_LOG_ERROR("Version did not match with server version!");
 		return false;
 	}
 
-	if (addrLen != sizeof(ClientFrameMessage))
+	// Validate the chunk against its own header, nothing from the network is trusted.
+	uint32 payload_size = (uint32)addrLen - sizeof(ClientFrameChunkMessage);
+	uint32 frame_size = chunk->FrameSize;
+	uint32 chunk_count = chunk->ChunkCount;
+	uint32 chunk_index = chunk->ChunkIndex;
+	if (frame_size == 0 || frame_size > MAX_ENCODED_FRAME_SIZE ||
+		chunk_count != (frame_size + FRAME_CHUNK_PAYLOAD_SIZE - 1) / FRAME_CHUNK_PAYLOAD_SIZE ||
+		chunk_index >= chunk_count)
 	{
-		CAM_LOG_ERROR("Request size was not as expected!");
+		CAM_LOG_ERROR("Frame chunk header is invalid!");
 		return false;
 	}
 
-	CAM_LOG_DEBUG("Client {} tries to send a frame!", clientAddr.Value);
-	ClientFrameMessage *msg = (ClientFrameMessage *)message;
-
-	bool frame_stored = false;
-	uint32 frame_number = 0;
-	auto it = std::find(m_Clients.begin(), m_Clients.end(), clientAddr);
-	if (it != m_Clients.end())
+	uint32 offset = chunk_index * FRAME_CHUNK_PAYLOAD_SIZE;
+	if (payload_size != std::min(FRAME_CHUNK_PAYLOAD_SIZE, frame_size - offset))
 	{
-		Byte *frame = new Byte[msg->Frame.FrameSize];
-		uint32 frame_size = msg->Frame.FrameSize;
-
-		Core::addr_t current_client;
-		int32 bytes_received = m_Socket->RecvLarge(frame, frame_size, &current_client);
-	//	assert(frame_size == bytes_received);
-		
-		it->FrameWidth = msg->Frame.FrameWidth;
-		it->FrameHeight = msg->Frame.FrameHeight;
-
-		cv::Mat image(cv::Size(msg->Frame.FrameWidth, msg->Frame.FrameHeight), msg->Frame.Format, frame, cv::Mat::AUTO_STEP);
-
-	//	cv::Mat image(msg->Frame.FrameHeight, msg->Frame.FrameWidth, msg->Frame.Format);
-	//	cv::Mat image(msg->Frame.FrameHeight, msg->Frame.FrameWidth, CV_8UC3);
-
-		int32 baseIndex = 0;
-		for (int32 i = 0; i < image.rows; i++)
-		{
-			for (int32 j = 0; j < image.cols; j++)
-			{
-				image.at<cv::Vec3b>(i, j) = cv::Vec3b(frame[baseIndex + 0], frame[baseIndex + 1], frame[baseIndex + 2]);
-				baseIndex += 3;
-			}
-		}
-		
-		it->Frames.Push(image);
-		frame_stored = true;
-		frame_number = it->Frames.Size();
+		CAM_LOG_ERROR("Frame chunk payload size is invalid!");
+		return false;
 	}
 
-	ServerFrameResponse response = {};
-	response.Header.Type = SERVER_FRAME;
-	response.Header.Version = m_Version;
-	response.FrameStored = frame_stored;
-	response.StoredFrameCount = frame_number;
-	m_Socket->Send(&response, sizeof(response), clientAddr);
+	std::lock_guard<std::mutex> lock(m_ClientsMutex);
+	ClientEntry *client = FindClient(clientAddr);
+	if (!client)
+	{
+		// Unknown sender (e.g. not connected yet), just ignore the frame.
+		return true;
+	}
 
-	CAM_LOG_INFO("Server received frame from Client {} successfully!", clientAddr.Value);
+	FrameAssembly &assembly = client->Assembly;
+	if (assembly.Active && chunk->FrameId != assembly.FrameId)
+	{
+		// Wrap-around safe comparison. Chunks of older frames are late and useless.
+		if ((int32)(chunk->FrameId - assembly.FrameId) < 0)
+		{
+			return true;
+		}
+
+		// A newer frame started before the current one was complete, some datagram got lost. Drop the incomplete frame.
+		CAM_LOG_DEBUG("Dropped incomplete frame {0} ({1}/{2} chunks).", assembly.FrameId, assembly.ReceivedChunks, assembly.ChunkCount);
+		assembly.Active = false;
+	}
+
+	if (!assembly.Active)
+	{
+		assembly.FrameId = chunk->FrameId;
+		assembly.FrameSize = frame_size;
+		assembly.ChunkCount = chunk_count;
+		assembly.ReceivedChunks = 0;
+		assembly.ReceivedMask.assign(chunk_count, false);
+		assembly.Data = std::make_shared<std::vector<uchar>>(frame_size);
+		assembly.Active = true;
+	}
+	else if (assembly.FrameSize != frame_size || assembly.ChunkCount != chunk_count)
+	{
+		CAM_LOG_ERROR("Frame chunk does not match the frame it belongs to!");
+		return false;
+	}
+
+	if (assembly.ReceivedMask[chunk_index])
+	{
+		// Duplicate datagram
+		return true;
+	}
+
+	memcpy(assembly.Data->data() + offset, message + sizeof(ClientFrameChunkMessage), payload_size);
+	assembly.ReceivedMask[chunk_index] = true;
+	++assembly.ReceivedChunks;
+
+	if (assembly.ReceivedChunks == assembly.ChunkCount)
+	{
+		// Frame is complete. It is stored still encoded, which keeps the memory footprint of the ring buffer small.
+		client->Frames.Push(assembly.Data);
+		client->LatestFrame = assembly.Data;
+		++client->LatestFrameNumber;
+
+		assembly.Data.reset();
+		assembly.Active = false;
+	}
+
 	return true;
 }
 
 void Server::FramePreview()
 {
+	struct Preview
+	{
+		std::string Name;
+		EncodedFrame Frame;
+	};
+
+	std::unordered_map<uint64, uint32> shown_frames;
+	std::unordered_set<std::string> created_windows;
+
 	while (m_Running)
 	{
-		for (uint32 i = 0; i < m_Clients.size(); ++i)
+		// Only hold the lock while copying the (shared) frame pointers, decoding and drawing happens without it.
+		std::vector<Preview> previews;
 		{
-			ClientEntry &client = m_Clients[i];
-
-			for (uint32 j = 0; j < client.Frames.Size(); ++j)
+			std::lock_guard<std::mutex> lock(m_ClientsMutex);
+			for (auto &client : m_Clients)
 			{
-				cv::Mat frame = client.Frames.Front();
-				std::string &name = client.FrameTitle;
-				uint32 frame_width = client.FrameWidth;
-				uint32 frmae_height = client.FrameHeight;
-
-				cv::namedWindow(name.c_str(), cv::WND_PROP_FULLSCREEN);
-				cv::setWindowProperty(name.c_str(), cv::WND_PROP_FULLSCREEN, cv::WND_PROP_FULLSCREEN);
-				cv::imshow(name.c_str(), frame);
-
-				char key = cv::waitKey(1);
-				if (key == 'q')
+				uint32 &shown = shown_frames[client->Address.Value];
+				if (client->LatestFrame && client->LatestFrameNumber != shown)
 				{
-					cv::destroyWindow(name.c_str());
+					shown = client->LatestFrameNumber;
+					previews.push_back({ client->FrameTitle, client->LatestFrame });
 				}
 			}
 		}
+
+		for (Preview &preview : previews)
+		{
+			cv::Mat frame = cv::imdecode(*preview.Frame, cv::IMREAD_COLOR);
+			if (frame.empty())
+			{
+				CAM_LOG_ERROR("Could not decode frame of {}!", preview.Name);
+				continue;
+			}
+
+			if (created_windows.insert(preview.Name).second)
+			{
+				// Resizable window, which keeps the aspect ratio of the frame instead of stretching it. Starts with the size of the frame.
+				cv::namedWindow(preview.Name.c_str(), cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
+				cv::resizeWindow(preview.Name.c_str(), frame.cols, frame.rows);
+			}
+
+			cv::imshow(preview.Name.c_str(), frame);
+		}
+
+		char key = (char)cv::waitKey(1);
+		if (key == 'q')
+		{
+			cv::destroyAllWindows();
+			created_windows.clear();
+		}
 	}
 }
-

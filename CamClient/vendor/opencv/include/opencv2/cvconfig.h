@@ -66,17 +66,20 @@
 #define HAVE_IPP
 #define HAVE_IPP_ICV
 #define HAVE_IPP_IW
-#define HAVE_IPP_IW_LL
+/* #undef HAVE_IPP_IW_LL */
 
 /* JPEG-2000 codec */
 #define HAVE_OPENJPEG
 /* #undef HAVE_JASPER */
 
+/* AVIF codec */
+/* #undef HAVE_AVIF */
+
 /* IJG JPEG codec */
 #define HAVE_JPEG
 
-/* libpng/png.h needs to be included */
-/* #undef HAVE_LIBPNG_PNG_H */
+/* JPEG XL codec */
+/* #undef HAVE_JPEGXL */
 
 /* GDCM DICOM codec */
 /* #undef HAVE_GDCM */
@@ -105,6 +108,9 @@
 
 /* PNG codec */
 #define HAVE_PNG
+
+/* PNG codec */
+/* #undef HAVE_SPNG */
 
 /* Posix threads (pthreads) */
 /* #undef HAVE_PTHREAD */
@@ -144,6 +150,6 @@
 #define OPENCV_TRACE
 
 /* Library QR-code decoding */
-#define HAVE_QUIRC
+/* #undef HAVE_QUIRC */
 
 #endif // OPENCV_CVCONFIG_H_INCLUDED

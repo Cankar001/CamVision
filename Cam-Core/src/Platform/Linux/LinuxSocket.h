@@ -28,16 +28,13 @@ namespace Core
 		virtual int32 Recv(void *dst, int32 dst_bytes, addr_t *addr) override;
 		virtual int32 Send(void const *src, int32 src_bytes, addr_t addr) override;
 
-		virtual int32 SendLarge(void const *src, int32 src_bytes, addr_t addr) override;
-		virtual int32 RecvLarge(void *dst, int32 dst_bytes, addr_t *addr) override;
-
 		virtual bool SetNonBlocking(bool enabled) override;
+		virtual bool SetBufferSizes(int32 send_bytes, int32 recv_bytes) override;
 		virtual addr_t Lookup(const std::string &host, uint16 port) override;
 
 	private:
 
 		int32 m_Socket = -1;
-		int32 m_Connection = -1;
 	};
 }
 

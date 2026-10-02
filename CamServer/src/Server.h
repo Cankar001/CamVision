@@ -4,6 +4,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <memory>
+#include <mutex>
 #include <thread>
 
 #include <opencv2/opencv.hpp>
@@ -26,49 +28,52 @@ struct ServerConfig
 	uint32 VideoBackupDuration;
 };
 
+/// <summary>
+/// An encoded (JPEG) frame. Shared, so the ring buffer, the preview and the frame assembly never copy the pixel data.
+/// </summary>
+using EncodedFrame = std::shared_ptr<std::vector<uchar>>;
+
+/// <summary>
+/// The frame, which is currently being reassembled from its datagrams.
+/// </summary>
+struct FrameAssembly
+{
+	uint32 FrameId = 0;
+	uint32 FrameSize = 0;
+	uint32 ChunkCount = 0;
+	uint32 ReceivedChunks = 0;
+	bool Active = false;
+	std::vector<bool> ReceivedMask;
+	EncodedFrame Data;
+};
+
 struct ClientEntry
 {
 	Core::addr_t Address;
-	Core::RingBuffer<cv::Mat> Frames;
-	std::string FrameTitle;
-	uint32 FrameWidth;
-	uint32 FrameHeight;
 
-	ClientEntry(uint32 frame_size)
-		: Frames(Core::RingBuffer<cv::Mat>(frame_size))
+	/// <summary>
+	/// The last X minutes of encoded frames, kept in memory for saving to disk after something happened.
+	/// </summary>
+	Core::RingBuffer<EncodedFrame> Frames;
+	std::string FrameTitle;
+
+	FrameAssembly Assembly;
+
+	/// <summary>
+	/// The newest complete frame, used by the live preview.
+	/// </summary>
+	EncodedFrame LatestFrame;
+	uint32 LatestFrameNumber = 0;
+
+	ClientEntry(uint32 frame_capacity)
+		: Frames(frame_capacity)
 	{
 		Address = {};
 	}
 
-	inline bool operator==(const ClientEntry &other) const
-	{
-		return Address.Value == other.Address.Value && Frames.Size() == other.Frames.Size();
-	}
-
-	inline bool operator!=(const ClientEntry &other) const
-	{
-		return !(*this == other);
-	}
-
-	friend bool operator==(ClientEntry &lhs, const ClientEntry &rhs)
-	{
-		return lhs.Address.Value == rhs.Address.Value && lhs.Frames.Size() == rhs.Frames.Size();
-	}
-
-	friend bool operator!=(ClientEntry &lhs, const ClientEntry &rhs)
-	{
-		return !(lhs == rhs);
-	}
-
-	friend bool operator==(ClientEntry &lhs, const Core::addr_t &address)
-	{
-		return lhs.Address.Value == address.Value;
-	}
-
-	friend bool operator!=(ClientEntry &lhs, const Core::addr_t &address)
-	{
-		return !(lhs == address);
-	}
+	// The ring buffer owns raw memory, so entries must never be copied.
+	ClientEntry(const ClientEntry &) = delete;
+	ClientEntry &operator=(const ClientEntry &) = delete;
 };
 
 class Server
@@ -87,7 +92,12 @@ private:
 
 	bool OnClientConnected(Core::addr_t &clientAddr, Byte *message, int32 addrLen);
 	bool OnClientDisconnected(Core::addr_t &clientAddr, Byte *message, int32 addrLen);
-	bool OnClientFrame(Core::addr_t &clientAddr, Byte *message, int32 addrLen);
+	bool OnClientFrameChunk(Core::addr_t &clientAddr, Byte *message, int32 addrLen);
+
+	/// <summary>
+	/// Must be called with m_ClientsMutex locked.
+	/// </summary>
+	ClientEntry *FindClient(const Core::addr_t &clientAddr);
 
 	void FramePreview();
 
@@ -99,7 +109,9 @@ private:
 	uint32 m_Version;
 	bool m_Running = true;
 
-	std::vector<ClientEntry> m_Clients;
+	// Guards m_Clients and everything inside the entries, because the preview thread reads them while the network thread writes them.
+	std::mutex m_ClientsMutex;
+	std::vector<std::unique_ptr<ClientEntry>> m_Clients;
 	std::thread m_FramePreviewThread;
 };
 

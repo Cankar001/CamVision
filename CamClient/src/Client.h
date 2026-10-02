@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Cam-Core.h>
+#include <atomic>
 #include <string>
 #include <thread>
 #include <vector>
@@ -72,14 +73,6 @@ private:
 	bool OnConnectionClosed(Byte *message, uint32 length);
 
 	/// <summary>
-	/// Handles the frame response from the server.
-	/// </summary>
-	/// <param name="message">The message received from the server.</param>
-	/// <param name="length">The length of the message in bytes.</param>
-	/// <returns>Returns true, if the server responded with a OK status to the frame (Meaning that the frame was successfully received from the server).</returns>
-	bool OnFrameResponse(Byte *message, uint32 length);
-
-	/// <summary>
 	/// Processes the frame data (image analytics).
 	/// </summary>
 	/// <param name="frame">The frame to analyze.</param>
@@ -89,7 +82,7 @@ private:
 	void ProcessFrame(Byte *frame, uint32 frame_size, uint32 frame_width, uint32 frame_height);
 
 	/// <summary>
-	/// Sends the provided frame data to the connected server.
+	/// Sends the provided frame data to the connected server. The frame is JPEG encoded and sent as a series of independent datagrams (fire and forget).
 	/// </summary>
 	/// <param name="frame">The frame to send to the server.</param>
 	/// <param name="frame_size">The size of the frame in bytes.</param>
@@ -104,14 +97,14 @@ private:
 	Core::addr_t m_Host;
 	
 	uint32 m_Version;
-	bool m_Running = true;
+	std::atomic<bool> m_Running = true;
 	bool m_NetworkThreadFinished = false;
 	bool m_SentConnectionCloseRequest = false;
-	bool m_ConnectedToServer = false;
+	std::atomic<bool> m_ConnectedToServer = false;
+	uint32 m_NextFrameId = 0;
+	std::vector<uchar> m_EncodeBuffer;
 	Camera m_Camera;
 
 	std::thread m_NetworkThread;
 	std::thread m_CameraThread;
-
-	std::vector<FrameData> m_Frames;
 };

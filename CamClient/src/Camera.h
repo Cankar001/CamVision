@@ -85,6 +85,16 @@ public:
 private:
 
 	/// <summary>
+	/// Opens the camera stream and applies resolution and format.
+	/// </summary>
+	void OpenStream();
+
+	/// <summary>
+	/// Tries to open the camera with one specific backend and verifies, that frames can be read.
+	/// </summary>
+	bool TryOpenStream(int32 backend, bool useMjpg);
+
+	/// <summary>
 	/// Zooms in- or out in the current frame, calculates the view area based on the center parameter. 
 	/// Copies the Mat object into a new one, without modifying the parameter.
 	/// </summary>
