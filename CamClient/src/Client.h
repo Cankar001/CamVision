@@ -7,8 +7,58 @@
 #include <thread>
 #include <vector>
 
+#include "Features.h"
 #include "Camera.h"
+
+#if FRAME_ANALYSIS // FRAME ANALYSIS (movement and face detection in the camera client): switch all blocks with this tag to "#if 1" to enable it
+#include "MotionDetector.h"
+#endif // FRAME_ANALYSIS
 #include "Messages.h"
+
+#if FRAME_ANALYSIS // FRAME ANALYSIS (movement and face detection in the camera client): switch all blocks with this tag to "#if 1" to enable it
+/// <summary>
+/// Analyzes every frame in the camera client, and sends frames only if something happens (this saves a lot of bandwidth on a Raspberry Pi).
+/// While there is movement (or a face), and for a while after it, all frames are sent. Without it, only a few frames per second are sent, so the
+/// displays and the server do not show a frozen picture.
+/// </summary>
+struct FrameAnalysisConfig
+{
+	bool Enabled = false;
+
+	/// <summary>
+	/// Detect movement.
+	/// </summary>
+	bool DetectMotion = true;
+
+	/// <summary>
+	/// How much of the picture (in percent) has to change, to count as movement, and how much a pixel has to change (0 - 255).
+	/// </summary>
+	float MotionMinArea = 1.0f;
+	int32 MotionPixelThreshold = 25;
+
+	/// <summary>
+	/// Detect faces (not who it is, that is done by the server). Needs the YuNet model (the same file as the server uses), and OpenCV 4.5.4 or newer.
+	/// A face counts as activity like movement does (a person, who stands still in front of the camera, is not moving).
+	/// </summary>
+	bool DetectFaces = false;
+	std::string FaceModel = "models/face_detection_yunet_2023mar.onnx";
+
+	/// <summary>
+	/// The faces are searched in every N-th frame only, because it takes long.
+	/// </summary>
+	uint32 FaceEveryNFrames = 10;
+
+	/// <summary>
+	/// How long all frames are sent after the last movement (or face).
+	/// </summary>
+	uint32 HoldSeconds = 10;
+
+	/// <summary>
+	/// The frames per second, which are sent while nothing happens.
+	/// </summary>
+	uint32 IdleFPS = 1;
+};
+#endif // FRAME_ANALYSIS
 
 struct ClientConfig
 {
@@ -46,6 +96,10 @@ struct ClientConfig
 	uint32 MaxFPS = 0;
 
 	CameraConfig Camera;
+
+#if FRAME_ANALYSIS // FRAME ANALYSIS (movement and face detection in the camera client): switch all blocks with this tag to "#if 1" to enable it
+	FrameAnalysisConfig Analysis;
+#endif // FRAME_ANALYSIS
 };
 
 class Client
@@ -148,6 +202,20 @@ private:
 	std::chrono::steady_clock::time_point m_LastFrameSent;
 	std::vector<uchar> m_EncodeBuffer;
 	cv::Mat m_ScaledImage;
+
+	// ProcessFrame decides, if the current frame is sent to the server. Frames are sent, unless the frame analysis says otherwise.
+	bool m_SendThisFrame = true;
+
+#if FRAME_ANALYSIS // FRAME ANALYSIS (movement and face detection in the camera client): switch all blocks with this tag to "#if 1" to enable it
+	void InitAnalysis();
+
+	std::unique_ptr<MotionDetector> m_MotionDetector;
+	cv::Ptr<cv::FaceDetectorYN> m_FaceDetector;
+	uint32 m_AnalyzedFrames = 0;
+	int64 m_LastActivityMS = 0;
+	int64 m_LastIdleSendMS = 0;
+	bool m_WasActive = false;
+#endif // FRAME_ANALYSIS
 	Camera m_Camera;
 
 	std::thread m_NetworkThread;

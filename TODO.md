@@ -16,12 +16,8 @@ Open work for CamVision. Items marked with a path point at the code where they b
 
 ## Features not started
 
-- [ ] **CamDisplay follow-ups** (the display itself works, see README, section Displays): test it on a real Raspberry Pi with a screen (decoding speed with several cameras, `max_fps`), and let the display choose cameras at runtime (keys to switch between a grid and one camera).
 - [ ] **No authentication or encryption** between cameras, displays and the server: everybody in the network can connect a display and see all cameras (or send frames as a camera). Needs a shared secret or key per device, and encrypted frames, before the server is used outside a trusted home network.
-- [ ] **`ProcessFrame`** in `CamClient/src/Client.cpp`: empty. This is where movement detection and face analysis belong.
-- [ ] **Face detection and recognition, next steps** (the first version runs on the server, see README): test it with real models and photos (nothing was tested with the model files yet, only the setup and error paths), tune the thresholds, measure the CPU load with several cameras (use a Release build), and check it on the Pi (OpenCV >= 4.5.4 needed, Raspberry Pi OS Bookworm has 4.6).
-- [ ] **Emails, next steps** (the emails work, see README, section Emails about unknown people): test with a real mail provider (for example Gmail with an app password), and on Linux (the Linux part of the mailer, starting curl and the private temporary files, is written but not compiled or run). Ideas: one summary email for several unknown people in a short time, emails for other events (a camera went offline), and other ways to notify (push message, messenger).
-- [ ] Face analysis follow-ups: run it on the camera client too (send frames only when somebody is seen), start a recording on an event ("Record X last minutes"), a command to add a known person from a camera frame, and an API for the web interface.
+- [ ] **Emails, next steps**: one summary email for several unknown people in a short time, emails for other events (a camera went offline).
 - [ ] Web interface.
 - [ ] Record the last X minutes on demand, and record at specific times. The ring buffer on the server already holds the frames of the last minutes, but nothing saves them to disk yet.
 - [ ] Hardware section of the README ("coming soon").
@@ -30,14 +26,3 @@ Open work for CamVision. Items marked with a path point at the code where they b
 
 - [ ] Camera error handling in `CamClient/src/Camera.cpp`: `GenerateFrames` has static retry counters, which are never reset, and `Zoom()` probably builds a wrong rectangle (it passes the maximum coordinates, where width and height are expected).
 - [ ] No automated tests and no CI.
-
-## Done
-
-For reference, what is finished (details are in the git history):
-
-- Frame transfer from camera client to server (UDP, JPEG compressed, reassembly per client, incomplete frames are dropped), plus a server-side timeout for dead clients with automatic reconnect.
-- OpenCV upgrade to 4.14.0 (fixes the Elgato Facecam Pro).
-- Settings files and command line arguments for camera client, server and updater, and bandwidth tuning (`send_width`, `max_fps`, `jpeg_quality`).
-- Headless mode for the camera client.
-- Linux platform code (timer, file system, file watcher, crypto with keys and signatures, which are compatible with Windows), build setup for ARM, README instructions.
-- Updater: version handling, key pinning, safe install with fallback to the installed CamClient, hot reloading of the binary folder (replace single files or exchange the whole folder), `--query-version`, and a fast, adaptive download.

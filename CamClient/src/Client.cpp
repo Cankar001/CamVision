@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 
 #include "Core/Log.h"
@@ -60,6 +61,10 @@ Client::Client(const ClientConfig &config)
 	}
 
 	m_Host = m_Socket->Lookup(m_Config.ServerIP, m_Config.Port);
+
+#if FRAME_ANALYSIS // FRAME ANALYSIS (movement and face detection in the camera client): switch all blocks with this tag to "#if 1" to enable it
+	InitAnalysis();
+#endif // FRAME_ANALYSIS
 }
 
 Client::~Client()
@@ -383,9 +388,128 @@ bool Client::OnConnectionClosed(Byte *message, uint32 length)
 	return true;
 }
 
+#if FRAME_ANALYSIS // FRAME ANALYSIS (movement and face detection in the camera client): switch all blocks with this tag to "#if 1" to enable it
+void Client::InitAnalysis()
+{
+	const FrameAnalysisConfig &analysis = m_Config.Analysis;
+	if (!analysis.Enabled)
+	{
+		return;
+	}
+
+	if (analysis.DetectMotion)
+	{
+		m_MotionDetector = std::make_unique<MotionDetector>(analysis.MotionMinArea, analysis.MotionPixelThreshold);
+	}
+
+	if (analysis.DetectFaces)
+	{
+		if (!std::filesystem::exists(analysis.FaceModel))
+		{
+			CAM_LOG_ERROR("The face detector model {} does not exist, faces are not detected. It is the file of the server, see CamServer/models/README.md.", analysis.FaceModel);
+		}
+		else
+		{
+			try
+			{
+				m_FaceDetector = cv::FaceDetectorYN::create(analysis.FaceModel, "", cv::Size(320, 320), 0.8f, 0.3f, 200);
+			}
+			catch (const cv::Exception &e)
+			{
+				CAM_LOG_ERROR("Could not load the face detector model {0}: {1}", analysis.FaceModel, e.what());
+			}
+		}
+	}
+
+	CAM_LOG_INFO("Frame analysis is on: movement {0}, faces {1}. Frames are sent for {2} seconds after something happened, otherwise {3} per second.",
+		m_MotionDetector ? "yes" : "no", m_FaceDetector ? "yes" : "no", analysis.HoldSeconds, analysis.IdleFPS);
+}
+#endif // FRAME_ANALYSIS
+
 void Client::ProcessFrame(Byte *frame, uint32 frame_size, uint32 frame_width, uint32 frame_height)
 {
-	// TODO
+#if FRAME_ANALYSIS // FRAME ANALYSIS (movement and face detection in the camera client): switch all blocks with this tag to "#if 1" to enable it
+	// Without analysis every frame is sent.
+	m_SendThisFrame = true;
+
+	const FrameAnalysisConfig &analysis = m_Config.Analysis;
+	if (!analysis.Enabled || (!m_MotionDetector && !m_FaceDetector))
+	{
+		return;
+	}
+
+	// The frame is not copied, the picture uses the memory of the frame.
+	cv::Mat image((int32)frame_height, (int32)frame_width, m_Camera.GetFormat(), frame);
+	if (image.total() * image.elemSize() != frame_size)
+	{
+		return;
+	}
+
+	bool activity = false;
+
+	if (m_MotionDetector && m_MotionDetector->Update(image))
+	{
+		activity = true;
+	}
+
+	// Looking for faces is expensive, so it is done in some frames only. The detection runs on a small picture.
+	if (m_FaceDetector && ++m_AnalyzedFrames % std::max<uint32>(analysis.FaceEveryNFrames, 1) == 0)
+	{
+		try
+		{
+			cv::Mat small = image;
+			if (image.cols > 320)
+			{
+				cv::resize(image, small, cv::Size(320, std::max(1, (int)(image.rows * 320 / image.cols))), 0, 0, cv::INTER_AREA);
+			}
+
+			cv::Mat faces;
+			m_FaceDetector->setInputSize(small.size());
+			m_FaceDetector->detect(small, faces);
+			if (!faces.empty() && faces.rows > 0)
+			{
+				activity = true;
+			}
+		}
+		catch (const cv::Exception &e)
+		{
+			CAM_LOG_ERROR("Face detection failed: {}", e.what());
+		}
+	}
+
+	int64 now = Core::QueryMS();
+	if (activity)
+	{
+		m_LastActivityMS = now;
+	}
+
+	bool active = m_LastActivityMS != 0 && now - m_LastActivityMS < (int64)analysis.HoldSeconds * 1000;
+	if (active != m_WasActive)
+	{
+		m_WasActive = active;
+		if (active)
+		{
+			CAM_LOG_INFO("Something happens in front of the camera, sending all frames.");
+		}
+		else
+		{
+			CAM_LOG_INFO("Nothing happens anymore, sending {} frame(s) per second.", analysis.IdleFPS);
+		}
+	}
+
+	if (!active)
+	{
+		// Quiet: only a few frames per second, so the displays show a (slow) live picture.
+		if (now - m_LastIdleSendMS < 1000 / std::max<uint32>(analysis.IdleFPS, 1))
+		{
+			m_SendThisFrame = false;
+		}
+		else
+		{
+			m_LastIdleSendMS = now;
+		}
+	}
+#endif // FRAME_ANALYSIS
 }
 
 void Client::SendFrameToServer(Byte *frame, uint32 frame_size, uint32 frame_width, uint32 frame_height)
@@ -393,6 +517,12 @@ void Client::SendFrameToServer(Byte *frame, uint32 frame_size, uint32 frame_widt
 	if (!m_ConnectedToServer)
 	{
 		// The server does not know this client yet, it would just drop the frame.
+		return;
+	}
+
+	// The frame analysis (if it is turned on) decided, that nothing is sent now.
+	if (!m_SendThisFrame)
+	{
 		return;
 	}
 

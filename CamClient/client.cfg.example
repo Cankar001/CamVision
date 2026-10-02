@@ -39,3 +39,17 @@ send_width = 0
 
 # Maximum frames per second sent to the server. 0 = send every frame.
 max_fps = 0
+
+# ---- Frame analysis (movement and face detection in the camera client) -------------------------------------------------------------------------
+# NOT ACTIVE in this build: the code is switched off with "#if 0" (search for "FRAME ANALYSIS" in CamClient/src), the settings below do nothing yet.
+# When it is switched on, the camera client analyzes every frame, and sends all frames only while something happens (and for hold_seconds after it).
+# Otherwise only idle_fps frames per second are sent, so the displays show a slow live picture. This saves a lot of bandwidth on a Raspberry Pi.
+# analysis = false
+# analysis_motion = true
+# analysis_motion_min_area = 1.0          # how much of the picture (in percent) has to change to count as movement
+# analysis_motion_pixel_threshold = 25    # how much a pixel (0 - 255) has to change
+# analysis_faces = false                  # faces count as activity too (needs the YuNet model file of the server and OpenCV 4.5.4 or newer)
+# analysis_face_model = models/face_detection_yunet_2023mar.onnx
+# analysis_face_every = 10                # the faces are searched in every N-th frame only
+# analysis_hold_seconds = 10              # how long all frames are sent after the last movement
+# analysis_idle_fps = 1                   # frames per second, while nothing happens
