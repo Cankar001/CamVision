@@ -226,6 +226,13 @@ bool Server::OnClientConnected(Core::addr_t &clientAddr, Byte *message, int32 ad
 			client->Address = clientAddr;
 			client->CameraId = m_NextCameraId++;
 			client->FrameTitle = name;
+
+			// A camera, which was reported offline, is back.
+			if (m_Notifier && m_OfflineCameras.erase(client->FrameTitle) > 0)
+			{
+				m_Notifier->AddCameraOnline(client->FrameTitle);
+			}
+
 			m_Clients.push_back(std::move(client));
 		}
 	}
@@ -568,6 +575,14 @@ void Server::ReapStaleClients()
 			if (now - (*it)->LastSeen > timeout)
 			{
 				CAM_LOG_INFO("Client {0} ({1}) timed out after {2} seconds without a message, removing it.", (*it)->Address.Value, (*it)->FrameTitle, m_Config.ClientTimeoutSeconds);
+
+				// A camera, which vanished (and did not say goodbye), is reported. It is remembered, to report that it is back.
+				if (m_Notifier && m_Config.Email.ReportCameraOffline)
+				{
+					m_OfflineCameras.insert((*it)->FrameTitle);
+					m_Notifier->AddCameraOffline((*it)->FrameTitle, m_Config.ClientTimeoutSeconds);
+				}
+
 				it = m_Clients.erase(it);
 			}
 			else
@@ -859,6 +874,41 @@ void Server::FramePreview()
 	}
 }
 
+void Server::StartNotifications()
+{
+	if (!m_Config.Email.Enabled)
+	{
+		return;
+	}
+
+	auto mailer = std::make_unique<Mailer>(m_Config.Email);
+	if (!mailer->Validate())
+	{
+		CAM_LOG_ERROR("The emails are turned off, see the messages above.");
+		return;
+	}
+
+	std::string recipients;
+	for (const std::string &recipient : m_Config.Email.To)
+	{
+		recipients += (recipients.empty() ? "" : ", ") + recipient;
+	}
+
+	m_Mailer = std::move(mailer);
+	m_Notifier = std::make_unique<Notifier>(*m_Mailer, m_Config.Email);
+
+	std::string what = m_Config.Faces.Enabled ? "unknown people" : "";
+	if (m_Config.Email.ReportCameraOffline)
+	{
+		what += (what.empty() ? "" : " and ") + std::string("cameras going offline");
+	}
+
+	std::string mode = m_Config.Email.BatchEvents ? "events within " + std::to_string(m_Config.Email.CollectSeconds) + " seconds in one email" : std::string("one email per event");
+	CAM_LOG_INFO("Emails are turned on: {0} reported to {1} (via {2}:{3}), {4}, at most one email per {5} seconds.",
+		what.empty() ? std::string("nothing (turn on faces or email_camera_offline)") : what, recipients, m_Config.Email.Server, m_Config.Email.Port,
+		mode, m_Config.Email.MinIntervalSeconds);
+}
+
 void Server::StartFaceAnalysis()
 {
 	if (!m_Config.Faces.Enabled)
@@ -875,25 +925,6 @@ void Server::StartFaceAnalysis()
 
 	m_FaceAnalyzer = std::move(analyzer);
 
-	if (m_Config.Email.Enabled)
-	{
-		auto mailer = std::make_unique<Mailer>(m_Config.Email);
-		if (mailer->Validate())
-		{
-			std::string recipients;
-			for (const std::string &recipient : m_Config.Email.To)
-			{
-				recipients += (recipients.empty() ? "" : ", ") + recipient;
-			}
-
-			m_Mailer = std::move(mailer);
-			CAM_LOG_INFO("Emails are turned on: an unknown person is reported to {0} (via {1}:{2}).", recipients, m_Config.Email.Server, m_Config.Email.Port);
-		}
-		else
-		{
-			CAM_LOG_ERROR("The emails are turned off, see the messages above.");
-		}
-	}
 	CAM_LOG_INFO("Face analysis started: {0} per second per camera, {1}.", m_Config.Faces.FPS,
 		m_FaceAnalyzer->CanRecognize() ? std::to_string(m_FaceAnalyzer->GetKnownPeopleCount()) + " known people" : std::string("detection only"));
 
@@ -1099,7 +1130,7 @@ void Server::FaceLoop()
 			{
 				// The picture with the marked face is attached to the email, even if no snapshots are stored.
 				std::vector<uchar> snapshot_jpeg;
-				if (m_Mailer && m_Config.Email.AttachSnapshot)
+				if (m_Notifier && m_Config.Email.AttachSnapshot)
 				{
 					try
 					{
@@ -1121,30 +1152,15 @@ void Server::FaceLoop()
 
 void Server::NotifyUnknownPerson(const std::string &camera, const FaceResult &face, const std::string &snapshotFile, const std::vector<uchar> &snapshotJpeg)
 {
-	char numbers[160];
-	snprintf(numbers, sizeof(numbers), "%.2f (needed %.2f), detector score %.2f", face.Similarity, m_Config.Faces.MatchThreshold, face.Score);
-
-	if (!m_Mailer)
+	if (!m_Notifier)
 	{
 		// Emails are not turned on (or not possible), the event is only in the log.
+		char numbers[160];
+		snprintf(numbers, sizeof(numbers), "%.2f (needed %.2f), detector score %.2f", face.Similarity, m_Config.Faces.MatchThreshold, face.Score);
 		CAM_LOG_WARN("Unknown person at {0} at {1}. Best similarity to a known person: {2}. (Emails are not turned on, see email in server.cfg.)", camera, ReadableTimeString(), numbers);
 		return;
 	}
 
-	EmailMessage message;
-	message.Subject = "Unknown person at " + camera;
-	message.Body = "An unknown person was seen by the camera \"" + camera + "\".\n\n"
-		"Time: " + ReadableTimeString() + "\n"
-		"Camera: " + camera + "\n"
-		"Best similarity to a known person: " + numbers + "\n"
-		"Picture: " + (!snapshotJpeg.empty() ? std::string("attached") : (snapshotFile.empty() ? std::string("none (email_attach_snapshot is off)") : "stored as " + snapshotFile)) + "\n\n"
-		"This message was sent automatically by CamVision.\n";
-	message.Attachment = snapshotJpeg;
-	message.AttachmentName = "unknown_person_" + SafeName(camera) + ".jpg";
-
-	// The email is sent in the background, a slow mail server must not slow down the face analysis.
-	if (m_Mailer->Enqueue(message))
-	{
-		CAM_LOG_INFO("Email about the unknown person at {} is being sent...", camera);
-	}
+	// The notifier collects the events and sends them in one email, see email_collect_seconds.
+	m_Notifier->AddUnknownPerson(camera, face.Similarity, m_Config.Faces.MatchThreshold, face.Score, snapshotJpeg);
 }

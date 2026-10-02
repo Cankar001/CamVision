@@ -47,9 +47,12 @@ face_event_cooldown = 30
 face_on_displays = true
 
 # ---- Emails about unknown people (off by default) -------------------------------------------------------------------------------------------
-# When the face recognition sees an unknown person, an email is sent (with the picture, in which the face is marked). It needs the face analysis
-# above (faces = true, with the recognizer model and at least one known person), and curl (included in Windows 10 and 11, on Linux: sudo apt install curl).
-# Check the settings with: CamServer --email_test   (sends a test email and quits).
+# Emails are sent for these events:
+#   - an unknown person is seen by a camera (with the picture, in which the face is marked). Needs the face analysis above (faces = true, with the
+#     recognizer model and at least one known person),
+#   - a camera stops sending (it vanished without a goodbye), and when it is connected again. Does not need the face analysis (see email_camera_offline).
+# The events are collected and sent together (see email_collect_seconds and email_min_interval), so there are no floods of emails.
+# It needs curl (included in Windows 10 and 11, on Linux: sudo apt install curl). Check the settings with: CamServer --email_test (sends a test email).
 email = false
 
 # The mail server of your email provider (SMTP), and how to connect:
@@ -74,9 +77,24 @@ email_subject_prefix = [CamVision]
 # Attaches the picture with the marked face to the email.
 email_attach_snapshot = true
 
-# At most one email per this many seconds (so that somebody walking in front of several cameras does not send a flood of emails). Emails that are
-# requested earlier are not sent, it is written to the log.
+# true: events are collected and sent together (see the next settings). false: every single event is sent as an email of its own (the emails are
+# still spaced by email_min_interval, an event in the meantime waits for its turn and is not dropped; set email_min_interval = 0 for immediate emails).
+email_batch = true
+
+# (Only with email_batch = true.) The first event starts a collection window of this many seconds. Everything that happens in this time is sent in ONE email: an unknown person,
+# who walks past two cameras, or several cameras, which go offline together (a power cut), are one email with a list. 0 sends every event on its own.
+email_collect_seconds = 10
+
+# At most one email per this many seconds. Nothing is lost: with email_batch = true events in between are collected and sent together with the next
+# email, with email_batch = false they are sent one by one afterwards.
 email_min_interval = 60
+
+# The maximum number of pictures in one email. The pictures of different cameras come first.
+email_max_attachments = 4
+
+# Sends an email, when a camera stops sending, and when it comes back. A camera, which vanishes (no message for client_timeout_seconds, power or network
+# is gone), is reported. A camera, which shuts down properly (it says goodbye), is not.
+email_camera_offline = true
 
 # Checks the certificate of the mail server. Only set this to false for a server in your own network with a self signed certificate.
 email_verify_certificate = true

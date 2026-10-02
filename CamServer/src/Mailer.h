@@ -51,9 +51,31 @@ struct EmailConfig
 	bool AttachSnapshot = true;
 
 	/// <summary>
-	/// At most one email per this time. Emails, which are requested earlier, are not sent (it is logged).
+	/// true: events are collected and sent together in one email (see CollectSeconds). false: every event is sent as an email of its own (still at
+	/// most one email per MinIntervalSeconds, events in between wait for their turn, they are not dropped).
+	/// </summary>
+	bool BatchEvents = true;
+
+	/// <summary>
+	/// The first event starts a collection window of this many seconds, everything that happens in this time is sent in ONE email (an unknown person
+	/// seen by two cameras, or several cameras, which go offline together, are one email, not several). 0 sends every event on its own.
+	/// </summary>
+	uint32 CollectSeconds = 10;
+
+	/// <summary>
+	/// At most one email per this time. Events in between are not lost, they are collected and sent together with the next email.
 	/// </summary>
 	uint32 MinIntervalSeconds = 60;
+
+	/// <summary>
+	/// The maximum number of pictures in one email.
+	/// </summary>
+	uint32 MaxAttachments = 4;
+
+	/// <summary>
+	/// Sends an email, when a camera stops sending (it timed out), and when it is connected again. Works without the face analysis.
+	/// </summary>
+	bool ReportCameraOffline = true;
 
 	/// <summary>
 	/// Checks the certificate of the mail server. Only turn this off for a server in your own network with a self signed certificate.
@@ -71,16 +93,25 @@ struct EmailConfig
 	uint32 TimeoutSeconds = 60;
 };
 
+struct EmailAttachment
+{
+	std::string Name = "snapshot.jpg";
+
+	/// <summary>
+	/// A JPEG picture.
+	/// </summary>
+	std::vector<unsigned char> Data;
+};
+
 struct EmailMessage
 {
 	std::string Subject;
 	std::string Body;
 
 	/// <summary>
-	/// An optional picture, which is attached to the email (JPEG).
+	/// Optional pictures, which are attached to the email.
 	/// </summary>
-	std::string AttachmentName = "snapshot.jpg";
-	std::vector<unsigned char> Attachment;
+	std::vector<EmailAttachment> Attachments;
 };
 
 /// <summary>
@@ -102,10 +133,9 @@ public:
 	bool Validate();
 
 	/// <summary>
-	/// Puts an email into the queue, it is sent in the background. Not more than one email per MinIntervalSeconds is accepted.
+	/// Puts an email into the queue, it is sent in the background. When to send is decided by the caller (see Notifier).
 	/// </summary>
-	/// <returns>Returns true, if the email was accepted.</returns>
-	bool Enqueue(const EmailMessage &message);
+	void Enqueue(const EmailMessage &message);
 
 	/// <summary>
 	/// Sends an email right now and waits until it is sent.
@@ -126,5 +156,4 @@ private:
 	std::deque<EmailMessage> m_Queue;
 	std::thread m_Worker;
 	bool m_Stop = false;
-	int64 m_LastAcceptedMS = 0;
 };

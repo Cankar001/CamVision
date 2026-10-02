@@ -74,7 +74,11 @@ int main(int argc, char *argv[])
 	email.From = settings.GetString("email_from", email.From);
 	email.SubjectPrefix = settings.GetString("email_subject_prefix", email.SubjectPrefix);
 	email.AttachSnapshot = settings.GetBool("email_attach_snapshot", email.AttachSnapshot);
+	email.BatchEvents = settings.GetBool("email_batch", email.BatchEvents);
+	email.CollectSeconds = (uint32)std::max(settings.GetInt("email_collect_seconds", email.CollectSeconds), 0);
 	email.MinIntervalSeconds = (uint32)std::max(settings.GetInt("email_min_interval", email.MinIntervalSeconds), 0);
+	email.MaxAttachments = (uint32)std::max(settings.GetInt("email_max_attachments", email.MaxAttachments), 0);
+	email.ReportCameraOffline = settings.GetBool("email_camera_offline", email.ReportCameraOffline);
 	email.VerifyCertificate = settings.GetBool("email_verify_certificate", email.VerifyCertificate);
 	email.CurlPath = settings.GetString("email_curl_path", email.CurlPath);
 	email.TimeoutSeconds = (uint32)std::max(settings.GetInt("email_timeout", email.TimeoutSeconds), 5);
@@ -178,6 +182,7 @@ int main(int argc, char *argv[])
 	{
 		s.StartFramePreviews();
 	}
+	s.StartNotifications();
 	s.StartFaceAnalysis();
 	s.Run();
 

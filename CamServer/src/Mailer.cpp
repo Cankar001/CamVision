@@ -143,7 +143,7 @@ namespace
 		email += "Message-ID: <" + RandomHex(16) + "@camvision>\r\n";
 		email += "MIME-Version: 1.0\r\n";
 
-		bool attach = !message.Attachment.empty();
+		bool attach = !message.Attachments.empty();
 		if (attach)
 		{
 			email += "Content-Type: multipart/mixed; boundary=\"" + boundary + "\"\r\n\r\n";
@@ -156,11 +156,15 @@ namespace
 
 		if (attach)
 		{
-			email += "--" + boundary + "\r\n";
-			email += "Content-Type: image/jpeg; name=\"" + message.AttachmentName + "\"\r\n";
-			email += "Content-Transfer-Encoding: base64\r\n";
-			email += "Content-Disposition: attachment; filename=\"" + message.AttachmentName + "\"\r\n\r\n";
-			email += Base64(message.Attachment.data(), message.Attachment.size());
+			for (const EmailAttachment &attachment : message.Attachments)
+			{
+				email += "--" + boundary + "\r\n";
+				email += "Content-Type: image/jpeg; name=\"" + attachment.Name + "\"\r\n";
+				email += "Content-Transfer-Encoding: base64\r\n";
+				email += "Content-Disposition: attachment; filename=\"" + attachment.Name + "\"\r\n\r\n";
+				email += Base64(attachment.Data.data(), attachment.Data.size());
+			}
+
 			email += "--" + boundary + "--\r\n";
 		}
 
@@ -442,21 +446,11 @@ bool Mailer::Validate()
 	return true;
 }
 
-bool Mailer::Enqueue(const EmailMessage &message)
+void Mailer::Enqueue(const EmailMessage &message)
 {
 	std::lock_guard<std::mutex> lock(m_Mutex);
-
-	int64 now = Core::QueryMS();
-	if (m_LastAcceptedMS != 0 && now - m_LastAcceptedMS < (int64)m_Config.MinIntervalSeconds * 1000)
-	{
-		CAM_LOG_INFO("Email '{0}' not sent: the last email was sent less than {1} seconds ago (email_min_interval).", message.Subject, m_Config.MinIntervalSeconds);
-		return false;
-	}
-
-	m_LastAcceptedMS = now;
 	m_Queue.push_back(message);
 	m_Condition.notify_one();
-	return true;
 }
 
 void Mailer::WorkerLoop()

@@ -177,11 +177,18 @@ It uses the models YuNet (detection) and SFace (recognition) of OpenCV, no other
 
 The accuracy is good for frontal faces in decent light. It is a convenience feature, not a security system: do not use it to grant access to anything. Photos of people and the recognition results are personal data, handle them according to the laws, which apply to you (in the EU the GDPR).
 
-## Emails about unknown people
+## Emails
 
-When the face recognition sees a person, who matches nobody of the known people, the server can send an email with the picture, in which the face is marked. Together with the cooldown of the events (`face_event_cooldown`) and the limit `email_min_interval` (by default one email per minute), this does not flood the mailbox.
+The server can send an email when something happens, which you want to know about:
 
-1. **Prerequisites:** the face recognition must run (`faces = true`, both models, at least one known person), and **curl** must be installed. curl is part of Windows 10 and 11 already, on Linux install it with `sudo apt install curl`. The server uses curl to talk to the mail server (it takes care of the encryption and the login).
+- **An unknown person was seen:** the face recognition saw a person, who matches nobody of the known people. The email has the picture, in which the face is marked.
+- **A camera went offline:** a camera stopped sending (it vanished without a goodbye: power, network or the program crashed), and when it is connected again, you get "back online". A camera, which is shut down properly, is not reported. This does not need the face analysis.
+
+**One email instead of many:** the events are collected and sent together. The first event starts a collection window (`email_collect_seconds`, 10 seconds by default), and everything that happens in this time goes into ONE email: somebody walking past two cameras, or a power cut, which takes several cameras offline, result in one email with a list, and the pictures of the different cameras come first (up to `email_max_attachments`). Between two emails at least `email_min_interval` seconds (60 by default) pass. Events in between are not lost, they are sent together with the next email.
+
+**Prefer one email per event?** Set `email_batch = false`: every event is then sent as an email of its own. The emails are still spaced by `email_min_interval`, an event in the meantime waits for its turn (it is not dropped), so set `email_min_interval = 0` as well, if you want every email immediately.
+
+1. **Prerequisites:** for unknown people the face recognition must run (`faces = true`, both models, at least one known person), and **curl** must be installed. curl is part of Windows 10 and 11 already, on Linux install it with `sudo apt install curl`. The server uses curl to talk to the mail server (it takes care of the encryption and the login).
 2. **Settings:** copy the `email_*` settings of [CamServer/server.cfg.example](CamServer/server.cfg.example) into your `server.cfg` and fill in the mail server of your email provider: server, port, security (`starttls` for port 587, `ssl` for port 465), login, sender and recipients. Gmail, Outlook and others require an *app password* for programs like this, which you create in the security settings of your account.
 3. **Check it:** `CamServer --email_test` sends a test email with these settings and quits. If something is wrong, it says what (wrong password, server not reachable, certificate not trusted, ...).
 4. Set `email = true`.

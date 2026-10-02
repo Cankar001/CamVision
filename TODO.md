@@ -17,7 +17,6 @@ Open work for CamVision. Items marked with a path point at the code where they b
 ## Features not started
 
 - [ ] **No authentication or encryption** between cameras, displays and the server: everybody in the network can connect a display and see all cameras (or send frames as a camera). Needs a shared secret or key per device, and encrypted frames, before the server is used outside a trusted home network.
-- [ ] **Emails, next steps**: one summary email for several unknown people in a short time, emails for other events (a camera went offline).
 - [ ] Web interface.
 - [ ] Record the last X minutes on demand, and record at specific times. The ring buffer on the server already holds the frames of the last minutes, but nothing saves them to disk yet.
 - [ ] Hardware section of the README ("coming soon").

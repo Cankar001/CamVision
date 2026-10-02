@@ -6,6 +6,7 @@
 #include <vector>
 #include <chrono>
 #include <memory>
+#include <set>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -14,6 +15,7 @@
 
 #include "FaceAnalyzer.h"
 #include "Mailer.h"
+#include "Notifier.h"
 
 struct ServerConfig
 {
@@ -164,6 +166,12 @@ public:
 	/// </summary>
 	void StartFaceAnalysis();
 
+	/// <summary>
+	/// Starts the emails (unknown people, cameras going offline). Does nothing, if they are turned off or not possible (the reason is logged).
+	/// Independent of the face analysis, but unknown people can only be reported, if it is running.
+	/// </summary>
+	void StartNotifications();
+
 private:
 
 	bool Step();
@@ -231,6 +239,10 @@ private:
 	std::thread m_FaceThread;
 	std::unique_ptr<FaceAnalyzer> m_FaceAnalyzer;
 	std::unique_ptr<Mailer> m_Mailer;
+	std::unique_ptr<Notifier> m_Notifier;
+
+	// The cameras, which timed out and did not come back yet (guarded by m_ClientsMutex), to report them when they are back.
+	std::set<std::string> m_OfflineCameras;
 	std::thread m_ReaperThread;
 	std::thread m_ForwardThread;
 };
