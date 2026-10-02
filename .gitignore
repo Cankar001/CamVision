@@ -21,3 +21,9 @@ Makefile
 logs/
 client.cfg
 server.cfg
+update_client.cfg
+update_server.cfg
+private_key.key
+public_key.key
+signature.sig
+new_update/

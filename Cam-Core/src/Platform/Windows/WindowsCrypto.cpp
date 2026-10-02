@@ -44,21 +44,27 @@ namespace Core
 
 		BOOL result = TRUE;
 
-		pub->Size = sizeof(pub->Data);
-		DWORD public_size = (DWORD)pub->Size;
+		// Clear the buffers, so nothing but the key is in them (they are stored and sent over the network as they are).
+		memset(pub->Data, 0, sizeof(pub->Data));
+		memset(pri->Data, 0, sizeof(pri->Data));
+
+		DWORD public_size = (DWORD)sizeof(pub->Data);
 		if (!CryptExportKey(key, 0, PUBLICKEYBLOB, 0, pub->Data, &public_size))
 		{
 			std::cerr << "Could not export public key! Error code: " << GetLastError() << std::endl;
 			return FALSE;
 		}
 
-		pri->Size = sizeof(pri->Data);
-		DWORD private_size = (DWORD)pri->Size;
+		pub->Size = public_size;
+
+		DWORD private_size = (DWORD)sizeof(pri->Data);
 		if (!CryptExportKey(key, 0, PRIVATEKEYBLOB, 0, pri->Data, &private_size))
 		{
 			std::cerr << "Could not export private key! Error code: " << GetLastError() << std::endl;
 			return FALSE;
 		}
+
+		pri->Size = private_size;
 
 		if (!CryptDestroyKey(key))
 		{

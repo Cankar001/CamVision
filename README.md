@@ -148,6 +148,21 @@ The complete list with explanations is in the example files, copy them and edit 
 
 The client reads `client.cfg` from the folder, in which it is started. The server reads `server.cfg` from the `CamServer` project folder.
 
+## Updater
+
+The update server ships new camera client builds to the devices:
+
+1. Increase `CAM_VERSION` in `CamClient/src/CamVersion.h`, build the CamClient, and start the update server (`UpdateServer`). It packs all files from its `binary_path` folder into one update, signs it, and rebuilds it automatically, whenever something in that folder changes.
+2. On every device, the update client (`UpdateClient`) is started first. It asks the update server for its version. If the version differs, it downloads the update, checks the signature, installs it into its `install_path` folder, remembers the version, and starts the CamClient from there. As long as no update was installed yet, the CamClient from `fallback_path` (by default the build output of the machine) is started. If the server is not reachable or the signature is invalid, nothing is installed and the CamClient, which is already installed, is started anyway.
+
+**Hot reloading:** the update server never has to be restarted to ship new binaries. It watches the `binary_path` folder, and you can change it in any way: replace single files, copy a new build over it, or exchange the whole folder (delete it, rename it, put a new one in its place). When the content changed and stayed the same for 3 seconds (so a running copy does not cause rebuilds in between), the server builds the new update on the side and replaces the old one only when it is complete and signed. Clients, which ask afterwards, get the new update. If the folder is missing or empty, a file is still locked by a running copy, or the build fails, the previous update stays available and the server tries again.
+
+Clients only update, when the version **differs** from their installed version, so every new set of binaries needs a new version. The server takes the version from (in this order): the `version` setting, a `version.txt` in the binary folder (a number, shipped together with the binaries, so the folder can be exchanged on a server without any source code), or `CAM_VERSION` in `CamClient/src/CamVersion.h`. The server warns, if the files changed but the version did not. If the server is started before the binaries exist, it waits for them, and tells the clients meanwhile that they are up to date.
+
+The signing keys are created once by the update server (`public_key_path` and `private_key_path` in `update_server.cfg`) and reused for all updates. **The client pins the public key:** the first update is verified with the key from the server and the key is stored in the client's `public_key_path`, all later updates must be signed with the same key. For devices in the field it is safer to copy the server's public key file to the device before the first start. If you replace the signing key on purpose (`regenerate_keys = true`), delete the pinned key file on all clients.
+
+The settings are explained in [UpdateServer/update_server.cfg.example](UpdateServer/update_server.cfg.example) and [UpdateClient/update_client.cfg.example](UpdateClient/update_client.cfg.example). The update server reads `update_server.cfg` and the update client `update_client.cfg` from the folder, in which they are started (the `UpdateServer` / `UpdateClient` project folder, if started from a build folder, like the other programs).
+
 # Features
 
 The project currently supports these features:

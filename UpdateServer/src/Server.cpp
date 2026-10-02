@@ -1,6 +1,11 @@
 #include "Server.h"
 
+#include <algorithm>
+#include <cstring>
 #include <iostream>
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 #include <filesystem>
 
 #include "Utils/Utils.h"
@@ -19,8 +24,11 @@ Server::Server(const ServerConfig &config)
 	m_IPTable = new Core::IPTable();
 	m_Clients = new Core::Clients(m_Crypto, m_IPTable);
 
-	//m_LocalVersion = Core::utils::GetLocalVersion(m_Config.TargetSourcePath);
-	m_LocalVersion = 101;
+	m_LocalVersion = ResolveVersion();
+	if (m_LocalVersion == 0)
+	{
+		CAM_LOG_ERROR("Could not determine the version! Put a version.txt into {0}, fix the source path {1} (CamVersion.h), or set the version explicitly.", m_Config.TargetBinaryPath, m_Config.TargetSourcePath);
+	}
 
 	std::string cwd = "";
 	Core::FileSystem::Get()->GetCurrentWorkingDirectory(&cwd);
@@ -40,7 +48,11 @@ Server::Server(const ServerConfig &config)
 
 Server::~Server()
 {
-	Core::FileSystemWatcher::Stop();
+	m_WatchRunning = false;
+	if (m_WatchThread.joinable())
+	{
+		m_WatchThread.join();
+	}
 
 	delete m_Clients;
 	m_Clients = nullptr;
@@ -86,13 +98,188 @@ void Server::Run()
 	CAM_LOG_ERROR("socket creation failed.");
 }
 
-bool Server::LoadUpdateFile(bool forceDeleteSignature, bool skipDebugFiles)
+uint32 Server::ResolveVersion() const
 {
+	if (m_Config.Version != 0)
+	{
+		return m_Config.Version;
+	}
+
+	// A version.txt in the binary folder travels together with the binaries, so a folder can be replaced without any source code on the server.
+	Core::FileSystem *fs = Core::FileSystem::Get();
+	std::string version_file = m_Config.TargetBinaryPath + "/version.txt";
+	std::string content;
+	if (fs->FileExists(version_file) && fs->ReadTextFile(version_file, &content) != 0)
+	{
+		try
+		{
+			int version = std::stoi(content);
+			if (version > 0)
+			{
+				return (uint32)version;
+			}
+		}
+		catch (const std::exception &)
+		{
+		}
+
+		CAM_LOG_ERROR("{} does not contain a valid version, ignoring it.", version_file);
+	}
+
+	return Core::utils::GetLocalVersion(m_Config.TargetSourcePath);
+}
+
+bool Server::ShouldShip(const std::filesystem::directory_entry &entry, bool skipDebugFiles) const
+{
+	std::error_code error;
+	if (!entry.is_regular_file(error) || error)
+	{
+		// The update contains no folders.
+		return false;
+	}
+
+	std::string name = entry.path().filename().string();
+
+	// The private key must never be shipped to the clients, even if the key is stored in the folder, which is shipped.
+	if (name == std::filesystem::path(m_Config.PrivateKeyPath).filename().string())
+	{
+		return false;
+	}
+
+	// skip the archive itself (only the name matters, the path to it may contain anything)
+	if (name.find("update") != std::string::npos)
+	{
+		return false;
+	}
+
+	if (skipDebugFiles && name.find(".pdb") != std::string::npos)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+std::string Server::ComputeFingerprint() const
+{
+	// The folder may disappear or change at any moment, so only the error code variants are used, which never throw.
+	std::error_code error;
+	std::filesystem::directory_iterator it(m_Config.TargetBinaryPath, error);
+	if (error)
+	{
+		return "";
+	}
+
+	std::vector<std::string> entries;
+	for (; !error && it != std::filesystem::directory_iterator(); it.increment(error))
+	{
+		if (!ShouldShip(*it))
+		{
+			continue;
+		}
+
+		std::error_code size_error, time_error;
+		uint64 size = (uint64)it->file_size(size_error);
+		auto time = it->last_write_time(time_error);
+		if (size_error || time_error)
+		{
+			// The file is just being replaced.
+			continue;
+		}
+
+		entries.push_back(it->path().filename().string() + "|" + std::to_string(size) + "|" + std::to_string((int64)time.time_since_epoch().count()));
+	}
+
+	std::sort(entries.begin(), entries.end());
+
+	std::string fingerprint;
+	for (const std::string &entry : entries)
+	{
+		fingerprint += entry;
+		fingerprint += '\n';
+	}
+
+	return fingerprint;
+}
+
+// Reads a key file. The size comes from the disk, so it is checked that it fits.
+static bool ReadKeyFile(const std::string &path, Core::Crypto::key_t *out_key, uint32 *out_file_size)
+{
+	uint32 size = 0;
+	Byte *data = Core::FileSystem::Get()->ReadFile(path, &size);
+	if (!data)
+	{
+		CAM_LOG_ERROR("Could not read the key file {}!", path);
+		return false;
+	}
+
+	bool success = size > 0 && size <= sizeof(out_key->Data);
+	if (!success)
+	{
+		CAM_LOG_ERROR("The key file {0} has an invalid size of {1} bytes!", path, size);
+	}
+
+	if (success)
+	{
+		memset(out_key->Data, 0, sizeof(out_key->Data));
+		out_key->Size = size;
+		memcpy(out_key->Data, data, size);
+		*out_file_size = size;
+
+		// Old key files contain uninitialized memory behind the key.
+		Core::Crypto::NormalizeKey(out_key);
+	}
+
+	delete[] data;
+	return success;
+}
+
+// The Windows implementation of WriteFile refuses to overwrite existing files, so an existing file is removed first.
+static bool ReplaceFile(const std::string &path, const void *data, uint32 size)
+{
+	Core::FileSystem *fs = Core::FileSystem::Get();
+	if (fs->FileExists(path) && !fs->RemoveFile(path))
+	{
+		return false;
+	}
+
+	return fs->WriteFile(path, (void *)data, size);
+}
+
+// The private key allows to sign updates for all clients, nobody but the owner may read it.
+static bool WritePrivateKeyFile(const std::string &path, const void *data, uint32 size)
+{
+	if (!ReplaceFile(path, data, size))
+	{
+		return false;
+	}
+
+#ifndef _WIN32
+	chmod(path.c_str(), 0600);
+#endif
+
+	return true;
+}
+
+bool Server::LoadUpdateFile(bool regenerateKeys, bool skipDebugFiles)
+{
+	// The new update is built on the side and only replaces the current one at the very end. If anything fails, the current update stays available,
+	// and the network thread is never blocked while the (possibly large) update is packed.
+	Core::FileSystem *fs = Core::FileSystem::Get();
+
+	// The version may have changed since the start (new build, other folder).
+	uint32 version = ResolveVersion();
+	if (version == 0)
+	{
+		CAM_LOG_ERROR("Could not determine the version of the update!");
+		return false;
+	}
+
 	// First check, if the update path is valid
 	std::string update_path = m_Config.TargetBinaryPath;
 	std::string update_file = update_path + "/update.zip";
 
-	if (!Core::FileSystem::Get()->DirectoryExists(update_path))
+	if (!fs->DirectoryExists(update_path))
 	{
 		CAM_LOG_ERROR("Binary path from source does not exist! Please re-check your binary path or build the source first.");
 		return false;
@@ -101,9 +288,9 @@ bool Server::LoadUpdateFile(bool forceDeleteSignature, bool skipDebugFiles)
 	CAM_LOG_INFO("Generating new update package at location {} ...", update_file);
 
 	// then delete an existing update file
-	if (Core::FileSystem::Get()->FileExists(update_file))
+	if (fs->FileExists(update_file))
 	{
-		if (!Core::FileSystem::Get()->RemoveFile(update_file))
+		if (!fs->RemoveFile(update_file))
 		{
 			CAM_LOG_ERROR("Could not delete the file {}", update_file);
 			return false;
@@ -116,50 +303,58 @@ bool Server::LoadUpdateFile(bool forceDeleteSignature, bool skipDebugFiles)
 
 	// load the contents of the directory and store them into the zip file
 	std::vector<Core::ZipFile> files;
-	for (const std::filesystem::directory_entry &entry : std::filesystem::directory_iterator(update_path))
+	auto free_files = [&files]()
+	{
+		for (auto &file : files)
+		{
+			delete[] (Byte *)file.Buffer;
+			file.Buffer = nullptr;
+		}
+	};
+
+	std::error_code iterator_error;
+	std::filesystem::directory_iterator iterator(update_path, iterator_error);
+	if (iterator_error)
+	{
+		CAM_LOG_ERROR("Could not read the folder {}: {}", update_path, iterator_error.message());
+		return false;
+	}
+
+	for (const std::filesystem::directory_entry &entry : iterator)
 	{
 		const std::filesystem::path p = entry.path();
 		std::string zip_name = p.filename().string();
 		std::string current_file_name = p.string();
-	
-		// skip the archive itself
-		if (current_file_name.find("update") != std::string::npos)
+
+		if (!ShouldShip(entry, skipDebugFiles))
 		{
-			CAM_LOG_INFO("Skipping update file.");
+			CAM_LOG_INFO("Skipping {}.", zip_name);
 			continue;
 		}
 
-		if (current_file_name.find("logs") != std::string::npos)
-		{
-			CAM_LOG_INFO("Skipping logs.");
-			continue;
-		}
-
-		if (skipDebugFiles)
-		{
-			if (current_file_name.find(".pdb") != std::string::npos)
-			{
-				CAM_LOG_INFO("Skipping debug file {}", zip_name);
-				continue;
-			}
-		}
-	
 		CAM_LOG_INFO("Adding {}...", zip_name);
 
 		uint32 file_size = 0;
-		Byte *data = Core::FileSystem::Get()->ReadFile(current_file_name, &file_size);
+		Byte *data = fs->ReadFile(current_file_name, &file_size);
 		if (!data)
 		{
 			CAM_LOG_ERROR("Could not read file {}!", current_file_name);
+			free_files();
 			return false;
 		}
-		
+
 		Core::ZipFile file;
-		file.Name = std::filesystem::path(current_file_name).filename().string();
+		file.Name = zip_name;
 		file.Path = current_file_name;
 		file.Buffer = data;
 		file.BufferSize = file_size;
 		files.push_back(file);
+	}
+
+	if (files.empty())
+	{
+		CAM_LOG_ERROR("There are no files to ship in {}!", update_path);
+		return false;
 	}
 
 	CAM_LOG_INFO("Added all files.");
@@ -167,7 +362,12 @@ bool Server::LoadUpdateFile(bool forceDeleteSignature, bool skipDebugFiles)
 	// Now trying to store the whole contents into the zip file
 	CAM_LOG_INFO("Writing zip file to memory...");
 	Core::ZipArchive archive;
-	if (!archive.Store(files, update_file))
+	bool stored = archive.Store(files, update_file);
+
+	// Cleanup the memory.
+	free_files();
+
+	if (!stored)
 	{
 		CAM_LOG_ERROR("Could not save the zip file!");
 		return false;
@@ -175,155 +375,214 @@ bool Server::LoadUpdateFile(bool forceDeleteSignature, bool skipDebugFiles)
 
 	CAM_LOG_INFO("Zip file written successfully to {}", update_file);
 
-	// Cleanup the memory.
-	for (auto &file : files)
-	{
-		delete[] file.Buffer;
-		file.Buffer = nullptr;
-	}
-
 	// Load the whole ZIP file into memory
-	m_UpdateFile.Data = Core::FileSystem::Get()->ReadFile(update_file, &m_UpdateFile.Size);
-	
-	if (!m_UpdateFile.Data)
+	Core::FileSystemBuffer new_update_file;
+	new_update_file.Data = fs->ReadFile(update_file, &new_update_file.Size);
+
+	if (!new_update_file.Data)
 	{
 		CAM_LOG_ERROR("Could not read back in the update file!");
 		return false;
 	}
 
-	if (forceDeleteSignature)
+	if (regenerateKeys)
 	{
-		if (Core::FileSystem::Get()->FileExists(m_Config.PrivateKeyPath))
+		for (const std::string *path : { &m_Config.PrivateKeyPath, &m_Config.PublicKeyPath, &m_Config.SignaturePath })
 		{
-			if (!Core::FileSystem::Get()->RemoveFile(m_Config.PrivateKeyPath))
+			if (fs->FileExists(*path) && !fs->RemoveFile(*path))
 			{
-				CAM_LOG_ERROR("Could not remove private key!");
-				return false;
-			}
-		}
-
-		if (Core::FileSystem::Get()->FileExists(m_Config.PublicKeyPath))
-		{
-			if (!Core::FileSystem::Get()->RemoveFile(m_Config.PublicKeyPath))
-			{
-				CAM_LOG_ERROR("Could not remove public key!");
-				return false;
-			}
-		}
-
-		if (Core::FileSystem::Get()->FileExists(m_Config.SignaturePath))
-		{
-			if (!Core::FileSystem::Get()->RemoveFile(m_Config.SignaturePath))
-			{
-				CAM_LOG_ERROR("Could not remove signature!");
+				CAM_LOG_ERROR("Could not remove {}!", *path);
 				return false;
 			}
 		}
 	}
 
+	// The key pair stays the same for all updates, clients pin the public key. A new pair is only generated, if there is none (or if it is damaged).
 	Core::Crypto::key_t private_key, public_key;
-	if (Core::FileSystem::Get()->FileExists(m_Config.PrivateKeyPath))
+	bool keys_generated = false;
+	bool keys_loaded = false;
+	if (fs->FileExists(m_Config.PrivateKeyPath) && fs->FileExists(m_Config.PublicKeyPath))
 	{
-		Byte *public_key_data = Core::FileSystem::Get()->ReadFile(m_Config.PublicKeyPath, &public_key.Size);
-		memcpy(public_key.Data, public_key_data, public_key.Size);
-		delete[] public_key_data;
-		public_key_data = nullptr;
-
-		if (!public_key.Data)
+		uint32 private_file_size = 0, public_file_size = 0;
+		keys_loaded = ReadKeyFile(m_Config.PrivateKeyPath, &private_key, &private_file_size) && ReadKeyFile(m_Config.PublicKeyPath, &public_key, &public_file_size);
+		if (!keys_loaded)
 		{
-			CAM_LOG_ERROR("Could not read the public key!");
-			return false;
+			CAM_LOG_ERROR("The existing key files could not be read, generating a new key pair!");
 		}
-		
-		Byte *private_key_data = Core::FileSystem::Get()->ReadFile(m_Config.PrivateKeyPath, &private_key.Size);
-		memcpy(private_key.Data, private_key_data, private_key.Size);
-		delete[] private_key_data;
-		private_key_data = nullptr;
-
-		if (!private_key.Data)
+		else
 		{
-			CAM_LOG_ERROR("Could not read the private key!");
-			return false;
+			// Rewrite key files, which were stored with garbage behind the key (created by older versions).
+			if (private_key.Size != private_file_size)
+			{
+				CAM_LOG_INFO("Cleaning up the private key file {}.", m_Config.PrivateKeyPath);
+				WritePrivateKeyFile(m_Config.PrivateKeyPath, private_key.Data, private_key.Size);
+			}
+
+			if (public_key.Size != public_file_size)
+			{
+				CAM_LOG_INFO("Cleaning up the public key file {}.", m_Config.PublicKeyPath);
+				ReplaceFile(m_Config.PublicKeyPath, public_key.Data, public_key.Size);
+			}
 		}
 	}
-	else
+
+	if (!keys_loaded)
 	{
 		if (!m_Crypto->GenKeys(&public_key, &private_key))
 		{
 			CAM_LOG_ERROR("Could not generate public/private key pair!");
 			return false;
 		}
+
+		keys_generated = true;
+		CAM_LOG_INFO("Generated a new public/private key pair.");
 	}
 
 	// make the signature for the file
+	Signature new_signature = {};
 	if (!m_Crypto->SignSignature(
-		m_UpdateSignature.Data, 
-		sizeof(m_UpdateSignature.Data), 
-		m_UpdateFile.Data, 
-		m_UpdateFile.Size, 
-		private_key.Data, 
+		new_signature.Data,
+		sizeof(new_signature.Data),
+		new_update_file.Data,
+		new_update_file.Size,
+		private_key.Data,
 		private_key.Size))
 	{
 		CAM_LOG_ERROR("Could not sign the update!");
 		return false;
 	}
 
-	if (Core::FileSystem::Get()->FileExists(m_Config.SignaturePath))
-	{
-		if (!Core::FileSystem::Get()->RemoveFile(m_Config.SignaturePath))
-		{
-			CAM_LOG_ERROR("Could not delete the old signature file!");
-			return false;
-		}
-	}
-
 	// Now write the security files
-	if (!Core::FileSystem::Get()->FileExists(m_Config.PrivateKeyPath))
+	if (keys_generated)
 	{
-		if (!Core::FileSystem::Get()->WriteFile(m_Config.PrivateKeyPath, private_key.Data, private_key.Size))
+		if (!WritePrivateKeyFile(m_Config.PrivateKeyPath, private_key.Data, private_key.Size))
 		{
 			CAM_LOG_ERROR("Could not write private key file!");
 			return false;
 		}
+
+		if (!ReplaceFile(m_Config.PublicKeyPath, public_key.Data, public_key.Size))
+		{
+			CAM_LOG_ERROR("Could not write public key file!");
+			return false;
+		}
 	}
 
-	if (!Core::FileSystem::Get()->WriteFile(m_Config.PublicKeyPath, public_key.Data, public_key.Size))
-	{
-		CAM_LOG_ERROR("Could not write public key file!");
-		return false;
-	}
-
-	if (!Core::FileSystem::Get()->WriteFile(m_Config.SignaturePath, m_UpdateSignature.Data, SIG_BYTES))
+	if (!ReplaceFile(m_Config.SignaturePath, new_signature.Data, SIG_BYTES))
 	{
 		CAM_LOG_ERROR("Could not write the new signature!");
 		return false;
 	}
 
-	m_PublicKey.Size = public_key.Size;
-	memcpy(m_PublicKey.Data, public_key.Data, sizeof(public_key.Data));
-	CAM_LOG_INFO("Loaded update with size {}", m_UpdateFile.Size);
-	
+	// Everything worked, now the new update replaces the old one. This is the only moment, where the network thread has to wait.
+	uint32 new_size = new_update_file.Size;
+	{
+		std::lock_guard<std::mutex> lock(m_UpdateMutex);
+
+		std::swap(m_UpdateFile.Data, new_update_file.Data);
+		std::swap(m_UpdateFile.Size, new_update_file.Size);
+		m_UpdateSignature = new_signature;
+		m_PublicKey = public_key;
+		m_LocalVersion = version;
+	}
+
+	// new_update_file now holds the old update, which is released when it goes out of scope.
+	CAM_LOG_INFO("Loaded update with size {0}, version {1}", new_size, version);
+
 	return true;
 }
 
 void Server::StartFileWatcher()
 {
-	Server *instance = this;
-	Core::FileSystemWatcher::Start(m_Config.TargetBinaryPath, [instance](const Core::FileSystemWatcherContext &context) mutable
+	// The update, which was built before, matches the current state of the folder.
+	m_BuiltFingerprint = ComputeFingerprint();
+
+	m_WatchRunning = true;
+	m_WatchThread = std::thread(&Server::WatchLoop, this);
+}
+
+void Server::WatchLoop()
+{
+	const int64 poll_ms = 1000;
+	const int64 settle_ms = 3000;	// The changes must not change for this long, before the update is rebuilt.
+	const int64 retry_ms = 10000;	// Pause after a failed build.
+
+	std::string pending;
+	bool has_pending = false;
+	int64 pending_since = 0;
+	int64 next_attempt_ms = 0;
+
+	while (m_WatchRunning)
 	{
-		CAM_LOG_INFO("Something happened with file {}", context.FilePath);
-		switch (context.Action)
+		// Sleep in small steps, so the server can stop quickly.
+		for (int64 waited = 0; waited < poll_ms && m_WatchRunning; waited += 100)
 		{
-			case Core::FileSystemWatcherAction::Added:
-			case Core::FileSystemWatcherAction::Modified:
-			case Core::FileSystemWatcherAction::Removed:
-			case Core::FileSystemWatcherAction::Renamed:
-				instance->m_UpdateFile.Free();
-				instance->m_UpdateSignature = {};
-				instance->LoadUpdateFile(true);
-				break;
+			Core::SleepMS(100);
 		}
-	});
+
+		std::string fingerprint = ComputeFingerprint();
+		if (fingerprint == m_BuiltFingerprint)
+		{
+			has_pending = false;
+			continue;
+		}
+
+		int64 now = Core::QueryMS();
+		if (!has_pending || fingerprint != pending)
+		{
+			// Something changed (again), wait until it stays the same for a while.
+			pending = fingerprint;
+			has_pending = true;
+			pending_since = now;
+
+			if (fingerprint.empty())
+			{
+				CAM_LOG_WARN("The folder {} is missing or has no files. The current update stays available.", m_Config.TargetBinaryPath);
+			}
+			else
+			{
+				CAM_LOG_INFO("Changes in {} detected, waiting until the files are stable...", m_Config.TargetBinaryPath);
+			}
+
+			continue;
+		}
+
+		if (fingerprint.empty() || now - pending_since < settle_ms || now < next_attempt_ms)
+		{
+			continue;
+		}
+
+		CAM_LOG_INFO("The files are stable, building the new update...");
+
+		uint32 previous_version = 0;
+		{
+			std::lock_guard<std::mutex> lock(m_UpdateMutex);
+			previous_version = m_LocalVersion;
+		}
+
+		if (LoadUpdateFile())
+		{
+			// The fingerprint was taken before the build. If files changed while building, the next poll sees a difference and builds again.
+			m_BuiltFingerprint = fingerprint;
+			has_pending = false;
+
+			uint32 new_version = 0;
+			{
+				std::lock_guard<std::mutex> lock(m_UpdateMutex);
+				new_version = m_LocalVersion;
+			}
+
+			if (new_version == previous_version)
+			{
+				CAM_LOG_WARN("The files changed, but the version is still {}. Clients with this version do not update! Increase CAM_VERSION or the number in version.txt.", new_version);
+			}
+		}
+		else
+		{
+			next_attempt_ms = now + retry_ms;
+			CAM_LOG_ERROR("Could not build the new update. The previous update stays available, trying again in {} seconds.", retry_ms / 1000);
+		}
+	}
 }
 
 bool Server::Step()
@@ -341,6 +600,9 @@ bool Server::Step()
 	{
 		return true;
 	}
+
+	// The update may be rebuilt by the file watcher at any time.
+	std::lock_guard<std::mutex> lock(m_UpdateMutex);
 
 	header_t *header = (header_t *)BUF;
 	if (header->Type == MessageType::CLIENT_UPDATE_BEGIN)
@@ -477,7 +739,8 @@ bool Server::Step()
 		ServerVersionInfoMessage res = {};
 		res.Header.Type = MessageType::SERVER_RECEIVE_VERSION;
 		res.Header.Version = m_LocalVersion;
-		res.Version = m_LocalVersion;
+		// Without an update there is nothing to offer, so the client is told, that it is up to date.
+		res.Version = m_UpdateFile.Size != 0 ? m_LocalVersion : client_version;
 		res.PublicKey.Size = m_PublicKey.Size;
 		memcpy(res.PublicKey.Data, m_PublicKey.Data, m_PublicKey.Size);
 		m_Socket->Send(&res, sizeof(res), addr);

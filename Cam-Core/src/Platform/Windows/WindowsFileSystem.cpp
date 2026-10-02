@@ -224,8 +224,9 @@ namespace Core
 		if (filePath.empty())
 			return false;
 
+		// Any invalid result means, that the path does not exist. This includes ERROR_PATH_NOT_FOUND (a parent folder is missing), not only ERROR_FILE_NOT_FOUND.
 		DWORD result = GetFileAttributesA(filePath.c_str());
-		return !(result == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND);
+		return result != INVALID_FILE_ATTRIBUTES;
 	}
 	
 	bool FileSystem::RemoveFile(const std::string &filePath) const
@@ -238,6 +239,18 @@ namespace Core
 		return RemoveDirectoryA(filePath.c_str());
 	}
 
+	bool FileSystem::MakeDirectory(const std::string &filePath) const
+	{
+		if (filePath.empty())
+		{
+			return false;
+		}
+
+		std::error_code error;
+		std::filesystem::create_directories(filePath, error);
+		return !error && DirectoryExists(filePath);
+	}
+
 	bool FileSystem::StartProgram(const std::string &executable)
 	{
 		STARTUPINFOA startInfo;
@@ -247,7 +260,10 @@ namespace Core
 		startInfo.cb = sizeof(STARTUPINFO);
 		ZeroMemory(&process, sizeof(process));
 
-		if (!CreateProcessA(executable.c_str(), NULL, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &startInfo, &process))
+		// The program expects to run in its own folder (like all programs of this project), not in the working directory of the caller.
+		std::string workingDirectory = std::filesystem::path(executable).parent_path().string();
+
+		if (!CreateProcessA(executable.c_str(), NULL, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, workingDirectory.empty() ? NULL : workingDirectory.c_str(), &startInfo, &process))
 		{
 			CAM_LOG_ERROR("Failed to start the process {}", executable);
 			return false;

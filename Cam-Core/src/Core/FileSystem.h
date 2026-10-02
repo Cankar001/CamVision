@@ -30,6 +30,11 @@ namespace Core
 		bool RemoveFile(const std::string &filePath) const;
 		bool RemoveDirectoy(const std::string &filePath) const;
 
+		/// <summary>
+		/// Creates the directory including all missing parent directories. Returns true, if the directory exists afterwards.
+		/// </summary>
+		bool MakeDirectory(const std::string &filePath) const;
+
 		bool StartProgram(const std::string &executable);
 	};
 
@@ -56,7 +61,7 @@ namespace Core
 
 		inline void Free()
 		{
-			free(Data);
+			delete[] Data;
 			Data = nullptr;
 			Size = 0;
 		}

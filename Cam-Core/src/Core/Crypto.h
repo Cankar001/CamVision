@@ -16,6 +16,12 @@ namespace Core
 
 		virtual ~Crypto() {}
 
+		/// <summary>
+		/// Cuts a key blob to its real size and clears everything behind it. Keys, which were created by older versions, were stored with a size of
+		/// the whole buffer (4096 bytes), and contained uninitialized memory behind the actual key. Does nothing for keys, which are already exact.
+		/// </summary>
+		static void NormalizeKey(key_t *key);
+
 		virtual bool GenKeys(key_t *pub, key_t *pri) = 0;
 
 		// Generates a random token.

@@ -1,7 +1,11 @@
 #pragma once
 
 #include <Cam-Core.h>
+#include <atomic>
+#include <filesystem>
+#include <mutex>
 #include <string>
+#include <thread>
 
 #include "Message.h"
 
@@ -18,14 +22,19 @@ struct ServerConfig
 	std::string TargetBinaryPath;
 
 	/// <summary>
-	/// The IP v4 address of the server
+	/// The IP v4 address of the server (informational, the server listens on all interfaces)
 	/// </summary>
-	std::string ServerIP;
+	std::string ServerIP = "0.0.0.0";
 
 	/// <summary>
 	/// The port of the server
 	/// </summary>
-	uint16 ServerPort;
+	uint16 ServerPort = 44200;
+
+	/// <summary>
+	/// The version, which is announced to the clients. 0 reads the version from the source (CamVersion.h in TargetSourcePath).
+	/// </summary>
+	uint32 Version = 0;
 
 	/// <summary>
 	/// the path to the public key
@@ -56,19 +65,48 @@ public:
 	void Run();
 
 	/// <summary>
-	/// Loads up the directory and assembles the update.
+	/// The version, which is announced to the clients. 0, if it could not be determined.
 	/// </summary>
-	/// <returns>Returns true, if the update was built successfully and if the server is ready to run.</returns>
-	bool LoadUpdateFile(bool forceDeleteSignature = false, bool skipDebugFiles = true);
+	uint32 GetVersion() const { return m_LocalVersion; }
 
 	/// <summary>
-	/// Watches the update path and automatically sends the new update to all clients
+	/// Loads up the directory and assembles the update.
+	/// </summary>
+	/// <param name="regenerateKeys">If true, the existing key pair is deleted and a new one is generated. Clients, which pinned the old public key, reject updates signed with the new one.</param>
+	/// <returns>Returns true, if the update was built successfully and if the server is ready to run.</returns>
+	bool LoadUpdateFile(bool regenerateKeys = false, bool skipDebugFiles = true);
+
+	/// <summary>
+	/// Starts to watch the folder with the binaries (hot reloading). Whenever its content changes, the update is rebuilt and offered to all clients, which ask afterwards.
+	/// The folder can be changed in any way: files replaced, the whole folder deleted and created again, renamed or swapped. The changes have to be stable for a few
+	/// seconds before the update is rebuilt, so copying files into the folder does not cause rebuilds in between. While the folder is missing, empty, or the
+	/// rebuild fails, the previous update stays available.
 	/// </summary>
 	void StartFileWatcher();
 
 private:
 
 	bool Step();
+
+	/// <summary>
+	/// The version, which is announced: the configured one, otherwise the one in version.txt in the binary folder, otherwise the one from the source (CamVersion.h).
+	/// </summary>
+	uint32 ResolveVersion() const;
+
+	/// <summary>
+	/// Tells, if a file in the binary folder is part of the update.
+	/// </summary>
+	bool ShouldShip(const std::filesystem::directory_entry &entry, bool skipDebugFiles = true) const;
+
+	/// <summary>
+	/// Describes the shipped files of the binary folder (name, size, time), empty if the folder does not exist or has no files.
+	/// </summary>
+	std::string ComputeFingerprint() const;
+
+	/// <summary>
+	/// The thread, which detects changes in the binary folder.
+	/// </summary>
+	void WatchLoop();
 
 private:
 
@@ -80,10 +118,18 @@ private:
 
 	Core::Crypto::key_t m_PublicKey = {};
 
+	// Guards the update data (file, signature, public key). The file watcher rebuilds the update on its own thread, while the network thread sends it.
+	std::mutex m_UpdateMutex;
+
+	// The hot reloading thread and the state of the folder, for which the current update was built.
+	std::thread m_WatchThread;
+	std::atomic<bool> m_WatchRunning{ false };
+	std::string m_BuiltFingerprint;
+
 	// Update data.
 	int64 m_LastUpdateCheckMS;
 	int64 m_LastUpdateWriteMS;
-	uint32 m_LocalVersion;
+	uint32 m_LocalVersion = 0;
 	Signature m_UpdateSignature;
 	Core::FileSystemBuffer m_UpdateFile;
 };

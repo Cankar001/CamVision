@@ -1,0 +1,31 @@
+# Copy this file to update_server.cfg (in the folder, in which the update server is started). Every setting can also be given as --key=value
+# on the command line, which overrides this file. Use --config=path to load a different file. Settings that are not set use the defaults shown here.
+
+# UDP port, on which the update server listens.
+port = 44200
+
+# Folder of the CamClient source. Its src/CamVersion.h tells the version, which is announced to the clients.
+# Clients update, when this version differs from their installed version: increase CAM_VERSION when you ship a new build.
+source_path = ../CamClient
+
+# Folder with the binaries, which are shipped to the clients (all files in it, without sub folders and *.pdb files).
+# The server watches this folder (hot reloading, no restart needed) and rebuilds the update, when its content changed and stayed the same for
+# 3 seconds. You can replace single files or exchange the whole folder. While it is missing or the build fails, the previous update stays available.
+# Every new set of binaries needs a new version, see "version" below. A version.txt in this folder is the easiest way (see below).
+# Windows default: ../CamClient/bin/Debug-windows-x86_64/CamClient     Linux default: ../CamClient/bin/Release-linux/CamClient
+binary_path = ../CamClient/bin/Debug-windows-x86_64/CamClient
+
+# Signing keys. They are generated once and then reused for all updates, because the clients pin the public key.
+# Keep the private key secret, whoever has it can sign updates for all clients.
+public_key_path = ../CamClient/public_key.key
+private_key_path = ../CamClient/private_key.key
+signature_path = ../CamClient/signature.sig
+
+# The version, which is announced to the clients. Clients update, when it differs from their installed version.
+# 0 = read it, in this order, from a version.txt in the binary folder (a single number, it travels together with the binaries), or from
+# CAM_VERSION in CamVersion.h in source_path. Any other number overrides both.
+version = 0
+
+# Deletes the existing key pair and generates a new one. All clients, which pinned the old public key, refuse updates signed with the
+# new key, until the pinned key file is deleted (or replaced by the new public key) on every client. Only use this for a lost or leaked key.
+regenerate_keys = false

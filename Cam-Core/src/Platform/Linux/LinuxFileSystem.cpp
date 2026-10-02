@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <cerrno>
+#include <filesystem>
 #include <iostream>
 #include <limits.h>
 #include <stdarg.h>
@@ -225,6 +226,18 @@ namespace Core
 		return rmdir(filePath.c_str()) == 0;
 	}
 
+	bool FileSystem::MakeDirectory(const std::string &filePath) const
+	{
+		if (filePath.empty())
+		{
+			return false;
+		}
+
+		std::error_code error;
+		std::filesystem::create_directories(filePath, error);
+		return !error && DirectoryExists(filePath);
+	}
+
 	bool FileSystem::StartProgram(const std::string &executable)
 	{
 		if (access(executable.c_str(), X_OK) != 0)
@@ -232,6 +245,17 @@ namespace Core
 			CAM_LOG_ERROR("Failed to start the process {}: {}", executable, strerror(errno));
 			return false;
 		}
+
+		// The program expects to run in its own folder (like all programs of this project), so it needs an absolute path, which stays valid after changing the directory.
+		char resolved[PATH_MAX];
+		if (!realpath(executable.c_str(), resolved))
+		{
+			CAM_LOG_ERROR("Failed to start the process {}: {}", executable, strerror(errno));
+			return false;
+		}
+
+		std::string absolutePath = resolved;
+		std::string workingDirectory = std::filesystem::path(absolutePath).parent_path().string();
 
 		// Double fork, so the started program is detached from this process (it keeps running when we exit) and never becomes a zombie.
 		pid_t pid = fork();
@@ -251,8 +275,13 @@ namespace Core
 				_exit(second < 0 ? 1 : 0);
 			}
 
-			char *argv[] = { (char *)executable.c_str(), nullptr };
-			execv(executable.c_str(), argv);
+			if (chdir(workingDirectory.c_str()) != 0)
+			{
+				_exit(126);
+			}
+
+			char *argv[] = { (char *)absolutePath.c_str(), nullptr };
+			execv(absolutePath.c_str(), argv);
 			_exit(127);
 		}
 

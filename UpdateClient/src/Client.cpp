@@ -1,13 +1,45 @@
 #include "Client.h"
 
+#include <algorithm>
+#include <cstring>
 #include <iostream>
 #include <assert.h>
+
+#ifndef CAM_PLATFORM_WINDOWS
+#include <sys/stat.h>
+#endif
 
 #include "Utils/Utils.h"
 #include "Utils/ZipArchive.h"
 #include "Core/Log.h"
 
 static uint32 MAX_RECV_ATTEMPTS = 250;
+
+// The version of the installed update. The version in the source code (CamVersion.h) does not change, when an update is installed,
+// so the installed version is remembered in this file in the install path.
+static const char *INSTALLED_VERSION_FILE = "installed_version.txt";
+
+// The Windows implementation of WriteFile refuses to overwrite existing files, so an existing file is removed first.
+static bool ReplaceFile(const std::string &path, const void *data, uint32 size)
+{
+	Core::FileSystem *fs = Core::FileSystem::Get();
+	if (fs->FileExists(path) && !fs->RemoveFile(path))
+	{
+		return false;
+	}
+
+	return fs->WriteFile(path, (void *)data, size);
+}
+
+// File names from the archive must stay inside the install path.
+static bool IsSafeFileName(const std::string &name)
+{
+	return !name.empty()
+		&& name.find("..") == std::string::npos
+		&& name.find(':') == std::string::npos
+		&& name[0] != '/'
+		&& name[0] != '\\';
+}
 
 Client::Client(const ClientConfig &config)
 	: m_Config(config)
@@ -19,12 +51,15 @@ Client::Client(const ClientConfig &config)
 	Core::FileSystem::Get()->GetCurrentWorkingDirectory(&cwd);
 
 	LoadLocalVersion();
+	LoadPinnedKey();
 
 	CAM_LOG_INFO("===================== CONFIG ===================================");
 	CAM_LOG_INFO("IP                    : {}", config.ServerIP);
 	CAM_LOG_INFO("Port                  : {}", config.Port);
 	CAM_LOG_INFO("Update binary path    : {}", config.UpdateBinaryPath);
 	CAM_LOG_INFO("Update source path    : {}", config.UpdateTargetPath);
+	CAM_LOG_INFO("Public key path       : {}", config.PublicKeyPath);
+	CAM_LOG_INFO("Public key            : {}", m_KeyPinned ? "pinned" : "not pinned yet, trusting the first key from the server");
 	CAM_LOG_INFO("Current Client version: {}", m_LocalVersion);
 	CAM_LOG_INFO("Current CWD           : {}", cwd);
 	CAM_LOG_INFO("================================================================");
@@ -61,8 +96,11 @@ void Client::RequestServerVersion()
 	message.ClientVersion = 0;
 	message.Header.Type = MessageType::CLIENT_REQUEST_VERSION;
 	message.Header.Version = m_LocalVersion;
-	uint32 bytes_sent = m_Socket->Send(&message, sizeof(message), m_Host);
-	assert(bytes_sent == sizeof(message));
+	int32 bytes_sent = m_Socket->Send(&message, sizeof(message), m_Host);
+	if (bytes_sent != (int32)sizeof(message))
+	{
+		CAM_LOG_ERROR("Could not send the version request to the update server!");
+	}
 
 	m_Status.Code = ClientStatusCode::NONE;
 }
@@ -72,84 +110,48 @@ void Client::Run()
 	// When running for the first time, request the server version
 	RequestServerVersion();
 
+	bool attempted_start = false;
+
 	for (;;)
 	{
 		if (m_CurrentRecvAttempt >= MAX_RECV_ATTEMPTS)
 		{
+			CAM_LOG_WARN("The update server does not respond (anymore).");
 			m_CurrentRecvAttempt = 0;
 			break;
 		}
 
-		if (m_Status.Code == ClientStatusCode::UP_TO_DATE)
+		if (m_Status.Code == ClientStatusCode::DOWNLOADED)
 		{
-			std::string zipFile = m_Config.UpdateBinaryPath + "/update.zip";
-			
-			// Construct the path to the target executable
-#if CAM_PLATFORM_WINDOWS
-			std::string camClientFile = m_Config.UpdateBinaryPath + "/CamClient.exe";
-#else
-			std::string camClientFile = m_Config.UpdateBinaryPath + "/CamClient";
-#endif
-
-
-			CAM_LOG_DEBUG("Extracting zip archive...");
-			Core::ZipArchive archive;
-			std::vector<Core::ZipFile> files = archive.Load(zipFile);
-			CAM_LOG_INFO("zip archive extracted successfully.");
-
-			// Run through the archive and store the files on the disk.
-			CAM_LOG_DEBUG("Writing all files from archive to disk...");
-			for (const auto &file : files)
+			if (InstallUpdate())
 			{
-				std::string current_file = m_Config.UpdateBinaryPath + "/" + file.Name;
-				CAM_LOG_DEBUG("    Writing file {} to disk...", current_file);
-
-				bool writeSuccess = Core::FileSystem::Get()->WriteFile(current_file, file.Buffer, file.BufferSize);
-				if (!writeSuccess)
-				{
-					CAM_LOG_ERROR("Failed to store file {} on disk!", current_file);
-				}
-			}
-			CAM_LOG_INFO("All files written successfully.");
-
-			// Remove zip file
-			CAM_LOG_DEBUG("Trying to remove the update file...");
-			if (!Core::FileSystem::Get()->RemoveFile(zipFile))
-			{
-				CAM_LOG_ERROR("Failed to remove file {}", zipFile);
-			}
-			CAM_LOG_INFO("Update file successfully removed.");
-
-			// Clean up the RAM memory
-			for (auto &file : files)
-			{
-				delete[] file.Buffer;
-				file.Buffer = nullptr;
-			}
-
-			// TODO: Update local version (maybe just receive it back from the server).
-
-			// TODO: start CamClient application
-			CAM_LOG_DEBUG("Starting CamClient...");
-			if (!Core::FileSystem::Get()->StartProgram(camClientFile))
-			{
-				CAM_LOG_ERROR("Failed to start the Cam Client application!");
+				CAM_LOG_INFO("Update to version {} installed successfully.", m_LocalVersion);
 			}
 			else
 			{
-				CAM_LOG_INFO("CamClient started successfully.");
+				m_Status.Code = ClientStatusCode::BAD_WRITE;
+				continue;
 			}
-			
-			// Set the new state, we are finished with everything and the client can shutdown.
-			m_Status.Code = ClientStatusCode::NONE;
+
+			attempted_start = true;
+			StartCamClient();
+			break;
+		}
+		else if (m_Status.Code == ClientStatusCode::UP_TO_DATE)
+		{
+			attempted_start = true;
+			StartCamClient();
+			break;
 		}
 		else if (m_Status.Code == ClientStatusCode::BAD_SIG)
 		{
-			CAM_LOG_ERROR("Bad Signature from last update.");
+			CAM_LOG_ERROR("The signature of the update is not valid. The update is not installed.");
+			break;
 		}
 		else if (m_Status.Code == ClientStatusCode::BAD_WRITE)
 		{
-			CAM_LOG_ERROR("Bad Write from last update.");
+			CAM_LOG_ERROR("The update could not be written to disk. The update is not installed.");
+			break;
 		}
 
 		MessageLoop();
@@ -161,6 +163,136 @@ void Client::Run()
 		// Limit the update rate.
 		Core::SleepMS(10);
 	}
+
+	if (!attempted_start)
+	{
+		// No update was possible (server not reachable, bad signature, ...). The camera must keep working with the version, which is installed.
+		CAM_LOG_WARN("Starting the installed CamClient without an update...");
+		StartCamClient();
+	}
+}
+
+bool Client::StartCamClient()
+{
+	// Construct the path to the target executable
+#if CAM_PLATFORM_WINDOWS
+	const char *executable = "/CamClient.exe";
+#else
+	const char *executable = "/CamClient";
+#endif
+
+	// The last installed update wins. If there was no update yet, the CamClient, which was there from the beginning, is used.
+	std::string camClientFile = m_Config.UpdateBinaryPath + executable;
+	if (!Core::FileSystem::Get()->FileExists(camClientFile) && !m_Config.FallbackPath.empty())
+	{
+		std::string fallbackFile = m_Config.FallbackPath + executable;
+		if (Core::FileSystem::Get()->FileExists(fallbackFile))
+		{
+			CAM_LOG_INFO("No update installed yet, using the CamClient from {}", m_Config.FallbackPath);
+			camClientFile = fallbackFile;
+		}
+	}
+
+	if (!Core::FileSystem::Get()->FileExists(camClientFile))
+	{
+		CAM_LOG_ERROR("There is no CamClient installed at {0} (or at {1})!", m_Config.UpdateBinaryPath + executable, m_Config.FallbackPath + executable);
+		return false;
+	}
+
+#ifndef CAM_PLATFORM_WINDOWS
+	// Files written to disk are not executable by default.
+	chmod(camClientFile.c_str(), 0755);
+#endif
+
+	CAM_LOG_DEBUG("Starting CamClient...");
+	if (!Core::FileSystem::Get()->StartProgram(camClientFile))
+	{
+		CAM_LOG_ERROR("Failed to start the Cam Client application!");
+		return false;
+	}
+
+	CAM_LOG_INFO("CamClient started successfully.");
+	return true;
+}
+
+bool Client::InstallUpdate()
+{
+	Core::FileSystem *fs = Core::FileSystem::Get();
+	std::string zipFile = m_Config.UpdateBinaryPath + "/update.zip";
+
+	if (!fs->FileExists(zipFile))
+	{
+		CAM_LOG_ERROR("The update file {} does not exist!", zipFile);
+		return false;
+	}
+
+	CAM_LOG_DEBUG("Extracting zip archive...");
+	Core::ZipArchive archive;
+	std::vector<Core::ZipFile> files = archive.Load(zipFile);
+	if (files.empty())
+	{
+		CAM_LOG_ERROR("The update archive is empty or could not be read!");
+		return false;
+	}
+
+	CAM_LOG_INFO("zip archive extracted successfully.");
+
+	// Run through the archive and store the files on the disk.
+	CAM_LOG_DEBUG("Writing all files from archive to disk...");
+	bool success = true;
+	for (const auto &file : files)
+	{
+		if (!IsSafeFileName(file.Name))
+		{
+			CAM_LOG_ERROR("The archive contains the invalid file name {}, skipping it!", file.Name);
+			success = false;
+			continue;
+		}
+
+		std::string current_file = m_Config.UpdateBinaryPath + "/" + file.Name;
+		CAM_LOG_DEBUG("    Writing file {} to disk...", current_file);
+
+		if (!ReplaceFile(current_file, file.Buffer, (uint32)file.BufferSize))
+		{
+			// For example, because the program is still running.
+			CAM_LOG_ERROR("Failed to store file {} on disk!", current_file);
+			success = false;
+		}
+	}
+
+	// Clean up the RAM memory
+	for (auto &file : files)
+	{
+		delete[] (Byte *)file.Buffer;
+		file.Buffer = nullptr;
+	}
+
+	// Remove zip file
+	CAM_LOG_DEBUG("Trying to remove the update file...");
+	if (!fs->RemoveFile(zipFile))
+	{
+		CAM_LOG_ERROR("Failed to remove file {}", zipFile);
+	}
+	else
+	{
+		CAM_LOG_INFO("Update file successfully removed.");
+	}
+
+	if (!success)
+	{
+		return false;
+	}
+
+	// Remember the new version, the next start of the update client has to know, that the update is installed.
+	std::string version = std::to_string(m_ClientVersion);
+	if (!ReplaceFile(m_Config.UpdateBinaryPath + "/" + INSTALLED_VERSION_FILE, version.data(), (uint32)version.size()))
+	{
+		CAM_LOG_ERROR("Could not store the installed version!");
+		return false;
+	}
+
+	m_LocalVersion = m_ClientVersion;
+	return true;
 }
 
 void Client::MessageLoop()
@@ -169,10 +301,11 @@ void Client::MessageLoop()
 	{
 		static Byte BUF[65536];
 
-		Core::addr_t addr;
+		Core::addr_t addr = {};
 		int32 len = m_Socket->Recv(BUF, sizeof(BUF), &addr);
-		if (len < 0)
+		if (len <= 0)
 		{
+			// Nothing received (0), or an error (-1).
 			++m_CurrentRecvAttempt;
 			return;
 		}
@@ -203,14 +336,37 @@ void Client::MessageLoop()
 			CAM_LOG_DEBUG("Received new server version: {}", msg->Version);
 			if (msg->Version != m_LocalVersion)
 			{
+				// Servers of older versions send the key with garbage behind it, so it is compared in its normalized form.
+				Core::Crypto::key_t received_key = msg->PublicKey;
+				if (received_key.Size <= sizeof(received_key.Data))
+				{
+					Core::Crypto::NormalizeKey(&received_key);
+				}
+
+				if (m_KeyPinned)
+				{
+					// Only the pinned key is trusted, whatever the server sends.
+					if (received_key.Size != m_Config.PublicKey.Size || memcmp(received_key.Data, m_Config.PublicKey.Data, m_Config.PublicKey.Size) != 0)
+					{
+						CAM_LOG_WARN("The public key of the server differs from the pinned key in {}. Only updates signed with the pinned key are accepted.", m_Config.PublicKeyPath);
+					}
+				}
+				else
+				{
+					// Trust the key of the server once. It is checked, that it fits into the buffer, the size comes from the network.
+					if (received_key.Size == 0 || received_key.Size > sizeof(received_key.Data))
+					{
+						CAM_LOG_ERROR("The server sent an invalid public key size: {}", msg->PublicKey.Size);
+						return;
+					}
+
+					m_Config.PublicKey = received_key;
+				}
+
 				// The versions are different, we need an update
 				m_Status.Code = ClientStatusCode::NEEDS_UPDATE;
 				m_ClientVersion = msg->Version;
 
-				// Copy the public key once
-				m_Config.PublicKey.Size = msg->PublicKey.Size;
-				memcpy(m_Config.PublicKey.Data, msg->PublicKey.Data, msg->PublicKey.Size);
-				
 				// reset the update state, so that in the next update the update will start
 				m_IsFinished = false;
 				CAM_LOG_WARN("Requiring update...");
@@ -231,7 +387,7 @@ void Client::MessageLoop()
 			}
 
 			ServerUpdateBeginMessage *msg = (ServerUpdateBeginMessage *)BUF;
-			
+
 			// Verify that the update size is reasonable (<200MB).
 			if (msg->UpdateSize == 0 || msg->UpdateSize >= (200 * 1024 * 1024))
 			{
@@ -296,7 +452,7 @@ void Client::MessageLoop()
 			// Verify that the position is on a piece boundry and something we actually requested.
 			if ((msg->PiecePos % PIECE_BYTES) != 0)
 			{
-				// TODO: Log error
+				CAM_LOG_ERROR("The piece position {0} is not on a piece boundary of {1} bytes!", msg->PiecePos, PIECE_BYTES);
 				return;
 			}
 
@@ -318,7 +474,8 @@ void Client::MessageLoop()
 			// Verify that we need the piece.
 			if (m_UpdatePieces.Ptr[idx])
 			{
-				// TODO: Log error
+				// Happens, if a piece was requested again, while the first answer was still on its way. Not an error.
+				CAM_LOG_DEBUG("Received piece {} twice, ignoring it.", idx);
 				return;
 			}
 
@@ -327,7 +484,7 @@ void Client::MessageLoop()
 			{
 				if (msg->PieceSize != PIECE_BYTES)
 				{
-					// TODO: Log error
+					CAM_LOG_ERROR("Piece {0} has the size {1}, but only the last piece may be smaller than {2} bytes!", idx, msg->PieceSize, PIECE_BYTES);
 					return;
 				}
 			}
@@ -341,7 +498,7 @@ void Client::MessageLoop()
 		{
 			if (len != sizeof(ServerUpdateTokenMessage))
 			{
-				// TODO: Log error
+				CAM_LOG_ERROR("The token message has the size {0}, but {1} was expected!", len, sizeof(ServerUpdateTokenMessage));
 				return;
 			}
 
@@ -358,69 +515,38 @@ void Client::MessageLoop()
 	}
 }
 
-#if 0
-bool Client::ExtractUpdate(const std::string &zipPath)
+uint32 Client::ReadInstalledVersion()
 {
-	mz_zip_archive zip_archive;
-
-	CAM_LOG_DEBUG("Extracting archive {}...", zipPath);
-
-	mz_bool status = mz_zip_reader_init_file(&zip_archive, zipPath.c_str(), 0);
-	if (!status)
+	std::string file = m_Config.UpdateBinaryPath + "/" + INSTALLED_VERSION_FILE;
+	std::string content;
+	if (!Core::FileSystem::Get()->FileExists(file) || Core::FileSystem::Get()->ReadTextFile(file, &content) == 0)
 	{
-		CAM_LOG_ERROR("Could not open the ZIP file!");
-		return false;
+		return 0;
 	}
 
-	for (uint32 i = 0; i < mz_zip_reader_get_num_files(&zip_archive); ++i)
+	try
 	{
-		mz_zip_archive_file_stat file_stat;
-		if (!mz_zip_reader_file_stat(&zip_archive, i, &file_stat))
-		{
-			CAM_LOG_ERROR("Could not make the file stats");
-
-			if (!mz_zip_reader_end(&zip_archive))
-			{
-				CAM_LOG_ERROR("Could not close the zip reader");
-			}
-
-			return false;
-		}
-
-		std::string file_name = file_stat.m_filename;
-		std::string file_name_on_disk = m_Config.UpdateBinaryPath + "/" + file_name;
-		std::string comment = file_stat.m_comment;
-		uint64 uncompressed_size = file_stat.m_uncomp_size;
-		uint64 compressed_size = file_stat.m_comp_size;
-		mz_bool is_dir = mz_zip_reader_is_file_a_directory(&zip_archive, i);
-		CAM_LOG_DEBUG("Extracting file {}", file_name);
-
-		Byte *p = (Byte*)mz_zip_reader_extract_file_to_heap(&zip_archive, file_name.c_str(), &uncompressed_size, 0);
-
-		if (!Core::FileSystem::Get()->WriteFile(file_name_on_disk, p, (uint32)uncompressed_size))
-		{
-			CAM_LOG_ERROR("Could not write the file {}", file_name_on_disk);
-			return false;
-		}
-
-		delete[] p;
-		p = nullptr;
+		int value = std::stoi(content);
+		return value > 0 ? (uint32)value : 0;
 	}
-
-	if (!mz_zip_reader_end(&zip_archive))
+	catch (const std::exception &)
 	{
-		CAM_LOG_ERROR("Could not close the zip reader");
-		return false;
+		CAM_LOG_ERROR("The file {} does not contain a valid version.", file);
+		return 0;
 	}
-
-	CAM_LOG_INFO("Archive {} extracted successfully.", zipPath);
-	return true;
 }
-#endif
 
 bool Client::LoadLocalVersion()
 {
-	// First load the local client version
+	// The installed update wins, the version in the source code never changes by installing an update.
+	uint32 installed_version = ReadInstalledVersion();
+	if (installed_version)
+	{
+		m_LocalVersion = installed_version;
+		return true;
+	}
+
+	// Otherwise load the version of the source.
 	uint32 local_version = Core::utils::GetLocalVersion(m_Config.UpdateTargetPath);
 	if (!local_version)
 	{
@@ -429,6 +555,40 @@ bool Client::LoadLocalVersion()
 
 	m_LocalVersion = local_version;
 	return true;
+}
+
+void Client::LoadPinnedKey()
+{
+	Core::FileSystem *fs = Core::FileSystem::Get();
+	if (m_Config.PublicKeyPath.empty() || !fs->FileExists(m_Config.PublicKeyPath))
+	{
+		return;
+	}
+
+	uint32 size = 0;
+	Byte *data = fs->ReadFile(m_Config.PublicKeyPath, &size);
+	if (!data)
+	{
+		CAM_LOG_ERROR("Could not read the pinned public key {}!", m_Config.PublicKeyPath);
+		return;
+	}
+
+	if (size > 0 && size <= sizeof(m_Config.PublicKey.Data))
+	{
+		memset(m_Config.PublicKey.Data, 0, sizeof(m_Config.PublicKey.Data));
+		m_Config.PublicKey.Size = size;
+		memcpy(m_Config.PublicKey.Data, data, size);
+
+		// Pinned keys of older versions have garbage behind the key.
+		Core::Crypto::NormalizeKey(&m_Config.PublicKey);
+		m_KeyPinned = true;
+	}
+	else
+	{
+		CAM_LOG_ERROR("The pinned public key {} has an invalid size!", m_Config.PublicKeyPath);
+	}
+
+	delete[] data;
 }
 
 void Client::Reset()
@@ -449,7 +609,6 @@ void Client::UpdateProgress(int64 now_ms, Core::addr_t addr)
 {
 	if (m_IsFinished)
 	{
-		CAM_LOG_INFO("Finished updating progress.");
 		return;
 	}
 
@@ -481,18 +640,52 @@ void Client::UpdateProgress(int64 now_ms, Core::addr_t addr)
 	{
 		if (m_Crypto->TestSignature(m_UpdateSignature.Data, SIG_BYTES, m_UpdateData.Ptr, m_UpdateData.Size, m_Config.PublicKey.Data, m_Config.PublicKey.Size))
 		{
+			if (!m_KeyPinned)
+			{
+				// The first update was verified with the key of the server. From now on, only this key is trusted.
+				if (ReplaceFile(m_Config.PublicKeyPath, m_Config.PublicKey.Data, m_Config.PublicKey.Size))
+				{
+					m_KeyPinned = true;
+					CAM_LOG_INFO("Pinned the public key of the server in {}.", m_Config.PublicKeyPath);
+				}
+				else
+				{
+					CAM_LOG_WARN("Could not store the public key in {}, it is not pinned.", m_Config.PublicKeyPath);
+				}
+			}
+
 			std::string update_file = m_Config.UpdateBinaryPath + "/update.zip";
 			CAM_LOG_DEBUG("Writing file {}", update_file);
-			bool writeSuccess = Core::FileSystem::Get()->WriteFile(update_file, m_UpdateData.Ptr, m_UpdateData.Size);
+
+			bool writeSuccess = Core::FileSystem::Get()->MakeDirectory(m_Config.UpdateBinaryPath)
+				&& ReplaceFile(update_file, m_UpdateData.Ptr, m_UpdateData.Size);
+
 			m_IsFinished = true;
-			m_Status.Code = ClientStatusCode::UP_TO_DATE;
-			CAM_LOG_INFO("File {} written successfully.", update_file);
+			m_IsUpdating = false;
+			m_UpdateData.Free();
+			m_UpdatePieces.Free();
+
+			if (writeSuccess)
+			{
+				m_Status.Code = ClientStatusCode::DOWNLOADED;
+				CAM_LOG_INFO("File {} written successfully.", update_file);
+			}
+			else
+			{
+				m_Status.Code = ClientStatusCode::BAD_WRITE;
+				CAM_LOG_ERROR("Could not write the file {}!", update_file);
+			}
+
 			return;
 		}
 		else
 		{
 			m_Status.Code = ClientStatusCode::BAD_SIG;
-			CAM_DEBUG_BREAK;
+			CAM_LOG_ERROR("The signature of the update does not match the {} public key.", m_KeyPinned ? "pinned" : "server's");
+			if (m_KeyPinned)
+			{
+				CAM_LOG_ERROR("If the key of the update server was changed on purpose, delete {} on this client to trust the new key.", m_Config.PublicKeyPath);
+			}
 		}
 
 		Reset();
@@ -551,4 +744,3 @@ void Client::UpdateProgress(int64 now_ms, Core::addr_t addr)
 		}
 	}
 }
-

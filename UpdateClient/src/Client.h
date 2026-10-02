@@ -14,9 +14,22 @@ struct ClientConfig
 	std::string UpdateTargetPath;
 
 	/// <summary>
-	/// 
+	/// The path, where the updates are installed and from where the CamClient gets started.
 	/// </summary>
 	std::string UpdateBinaryPath;
+
+	/// <summary>
+	/// The folder with a CamClient, which was not installed by an update (for example the build output, or the first installation on a device).
+	/// It is started, if no update was installed into UpdateBinaryPath yet.
+	/// </summary>
+	std::string FallbackPath;
+
+	/// <summary>
+	/// The file with the trusted public key of the update server (pinned key). If it exists, only updates signed with this key are accepted.
+	/// If it does not exist, the key sent by the server is trusted once (the first successful update) and stored here, all later updates must match it.
+	/// To trust a new server key, delete this file on the client.
+	/// </summary>
+	std::string PublicKeyPath;
 
 	/// <summary>
 	/// The update server ip
@@ -29,7 +42,7 @@ struct ClientConfig
 	uint16 Port;
 
 	/// <summary>
-	/// The public key, generated when starting the update client
+	/// The public key, which is used to verify the updates (the pinned key, or the one from the server before the first update).
 	/// </summary>
 	Core::Crypto::key_t PublicKey = {};
 };
@@ -50,6 +63,11 @@ enum class ClientStatusCode
 	/// The client received the same version from the server and will start the CamClient.
 	/// </summary>
 	UP_TO_DATE,
+
+	/// <summary>
+	/// The update was downloaded, the signature is valid and update.zip was written to disk, but it is not installed yet.
+	/// </summary>
+	DOWNLOADED,
 	
 	/// <summary>
 	/// The signature is missing or not generated.
@@ -85,8 +103,19 @@ public:
 private:
 
 	void MessageLoop();
-	//bool ExtractUpdate(const std::string &zipPath);
 	bool LoadLocalVersion();
+	uint32 ReadInstalledVersion();
+	void LoadPinnedKey();
+
+	/// <summary>
+	/// Extracts update.zip into the install path and remembers the new version.
+	/// </summary>
+	bool InstallUpdate();
+
+	/// <summary>
+	/// Starts the CamClient from the install path (the last installed update), or from the fallback path, if no update was installed yet.
+	/// </summary>
+	bool StartCamClient();
 
 private:
 
@@ -100,16 +129,17 @@ private:
 	Core::Buffer m_UpdateData;
 	Core::Buffer m_UpdatePieces;
 
-	int64 m_LastUpdateMS;
-	int64 m_LastPieceMS;
-	uint64 m_ClientToken;
-	uint64 m_ServerToken;
-	uint32 m_ClientVersion;
-	uint32 m_LocalVersion;
-	ClientStatus m_Status;
+	int64 m_LastUpdateMS = 0;
+	int64 m_LastPieceMS = 0;
+	uint64 m_ClientToken = 0;
+	uint64 m_ServerToken = 0;
+	uint32 m_ClientVersion = 0;
+	uint32 m_LocalVersion = 0;
+	ClientStatus m_Status = {};
+	bool m_KeyPinned = false;
 	bool m_IsFinished = true;
 	bool m_IsUpdating = false;
-	uint32 m_UpdateIdx;
+	uint32 m_UpdateIdx = 0;
 	uint32 m_CurrentRecvAttempt = 0;
 	Signature m_UpdateSignature;
 };

@@ -1,0 +1,23 @@
+# Copy this file to update_client.cfg (in the folder, in which the update client is started). Every setting can also be given as --key=value
+# on the command line, which overrides this file. Use --config=path to load a different file. Settings that are not set use the defaults shown here.
+
+# Address and port of the update server.
+server_ip = 127.0.0.1
+server_port = 44200
+
+# Folder of the CamClient source. Its src/CamVersion.h tells the version, as long as no update was installed yet.
+target_path = ../CamClient
+
+# Folder, in which updates are installed and from which the CamClient is started. After an update, the installed version is stored here
+# (installed_version.txt). Created automatically.
+install_path = ../CamClient/new_update
+
+# Folder with the CamClient, which was there before any update (for example the build output). It is started as long as no update was installed
+# into install_path yet. After the first update, the CamClient from install_path is used.
+# Windows default: ../CamClient/bin/Debug-windows-x86_64/CamClient     Linux default: ../CamClient/bin/Release-linux/CamClient
+fallback_path = ../CamClient/bin/Debug-windows-x86_64/CamClient
+
+# The trusted public key of the update server (pinned key). If this file exists, only updates signed with this key are installed.
+# If it does not exist, the key sent by the server is trusted once, with the first update, and stored here. Delete the file to trust a new server key.
+# For devices in the field, copy the public key file of the server here before the first start, so the first update does not have to be trusted blindly.
+public_key_path = ../CamClient/public_key.key
