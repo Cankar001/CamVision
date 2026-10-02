@@ -1,0 +1,23 @@
+# Copy this file to display.cfg (in the folder, in which the display is started). Every setting can also be given as --key=value on the command line,
+# which overrides this file. Use --config=path to load a different file. Settings that are not set use the defaults shown here.
+
+# Address and port of the server, which the display connects to. The port is the one of the camera server (45645 by default).
+server_ip = 127.0.0.1
+server_port = 45645
+
+# The name of this display, shown in the log of the server.
+name = Display #1
+
+# The one camera, which this display shows (the name of the camera, as set with "name" in client.cfg), fullscreen.
+# Empty shows all cameras next to each other: 1 camera fills the screen, 2 are side by side, 4 are 2 x 2, and so on.
+camera =
+
+# The maximum number of frames per second the display receives from every camera. Fewer frames save network bandwidth and CPU on a weak device
+# (a Raspberry Pi 3 with several cameras on Wi-Fi: try 5).
+max_fps = 10
+
+# The display always covers the whole screen, without a border or a title bar. Esc (or Q) shuts it down.
+
+# The size of the picture, if the display is started with --save_snapshot (for testing without a screen).
+window_width = 1280
+window_height = 720

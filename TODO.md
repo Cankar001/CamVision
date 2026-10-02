@@ -16,9 +16,11 @@ Open work for CamVision. Items marked with a path point at the code where they b
 
 ## Features not started
 
-- [ ] **CamDisplay:** `DisplayClient::Run()` in `CamDisplay/src` is empty, there is no live viewing on the display client yet.
+- [ ] **CamDisplay follow-ups** (the display itself works, see README, section Displays): test it on a real Raspberry Pi with a screen (decoding speed with several cameras, `max_fps`), and let the display choose cameras at runtime (keys to switch between a grid and one camera).
+- [ ] **No authentication or encryption** between cameras, displays and the server: everybody in the network can connect a display and see all cameras (or send frames as a camera). Needs a shared secret or key per device, and encrypted frames, before the server is used outside a trusted home network.
 - [ ] **`ProcessFrame`** in `CamClient/src/Client.cpp`: empty. This is where movement detection and face analysis belong.
 - [ ] **Face detection and recognition, next steps** (the first version runs on the server, see README): test it with real models and photos (nothing was tested with the model files yet, only the setup and error paths), tune the thresholds, measure the CPU load with several cameras (use a Release build), and check it on the Pi (OpenCV >= 4.5.4 needed, Raspberry Pi OS Bookworm has 4.6).
+- [ ] **Send an email, when an unknown person is seen.** The hook exists: `Server::NotifyUnknownPerson` in `CamServer/src/Server.cpp` is called once per cooldown and camera, and currently only logs `[TODO email] Would send an email ...` with the subject, the text and the snapshot. Still to do: SMTP settings in `server.cfg` (server, port, user, password, sender, recipients), sending without blocking the face analysis, the snapshot as an attachment, and a limit for the number of emails.
 - [ ] Face analysis follow-ups: run it on the camera client too (send frames only when somebody is seen), start a recording on an event ("Record X last minutes"), a command to add a known person from a camera frame, and an API for the web interface.
 - [ ] Web interface.
 - [ ] Record the last X minutes on demand, and record at specific times. The ring buffer on the server already holds the frames of the last minutes, but nothing saves them to disk yet.
@@ -26,7 +28,6 @@ Open work for CamVision. Items marked with a path point at the code where they b
 
 ## Cleanup and quality
 
-- [ ] `CamClient/src/PythonCamera.cpp` is probably legacy. It still uses the old window flags and `VideoCapture(0)`. Remove it, or bring it up to date.
 - [ ] Camera error handling in `CamClient/src/Camera.cpp`: `GenerateFrames` has static retry counters, which are never reset, and `Zoom()` probably builds a wrong rectangle (it passes the maximum coordinates, where width and height are expected).
 - [ ] No automated tests and no CI.
 

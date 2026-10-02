@@ -27,7 +27,9 @@ Client::Client(const ClientConfig &config)
 {
 	std::string cwd = "";
 	Core::FileSystem::Get()->GetCurrentWorkingDirectory(&cwd);
-	m_Version = Core::utils::GetLocalVersion("../../..");
+	// The protocol version is independent of the version of this software (CAM_VERSION), which changes with every update.
+	m_Version = CAM_PROTOCOL_VERSION;
+	uint32 software_version = Core::utils::GetLocalVersion("../../..");
 
 	CAM_LOG_INFO("===================== CONFIG ===================================");
 	CAM_LOG_INFO("IP                    : {}", config.ServerIP);
@@ -39,7 +41,7 @@ Client::Client(const ClientConfig &config)
 	CAM_LOG_INFO("Max FPS               : {}", config.MaxFPS == 0 ? "unlimited" : std::to_string(config.MaxFPS));
 	CAM_LOG_INFO("Camera index          : {}", config.Camera.Index);
 	CAM_LOG_INFO("Camera size           : {0}x{1}", config.Camera.Width, config.Camera.Height);
-	CAM_LOG_INFO("Current Client version: {}", m_Version);
+	CAM_LOG_INFO("Current Client version: {0} (protocol {1})", software_version, m_Version);
 	CAM_LOG_INFO("Current CWD           : {}", cwd);
 	CAM_LOG_INFO("================================================================");
 

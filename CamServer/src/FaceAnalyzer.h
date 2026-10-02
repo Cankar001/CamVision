@@ -64,6 +64,12 @@ struct FaceConfig
 	std::string SnapshotPath = "faces";
 
 	/// <summary>
+	/// Draws the faces into the pictures, which are sent to the displays (like in the preview of the server). If false, the displays get the
+	/// pictures of the cameras as they are.
+	/// </summary>
+	bool DrawOnDisplays = true;
+
+	/// <summary>
 	/// A person, who stays in front of a camera, is reported once per this time.
 	/// </summary>
 	uint32 EventCooldownSeconds = 30;

@@ -137,15 +137,41 @@ journalctl -u camvision-client -f      # shows the log
 | `Could not connect to server` | Check `server_ip` and `server_port`, the server must be running, and UDP on the server port must be allowed by the firewall of the server. |
 | `Gtk-WARNING: cannot open display` | There is no desktop session. Set `headless = true` (client) or `preview = false` (server). |
 
+# Displays
+
+A display is another computer (for example a Raspberry Pi with a screen), which shows the pictures of the cameras. It connects to the server like a camera client, but tells the server that it is a display: instead of sending frames it **receives** the frames of the cameras from the server, and shows them. This way the screen can be at a different place than the camera, and any number of displays can be set up in the house, each one showing all cameras or just one.
+
+1. **Build** the `CamDisplay` program (like the others, see "Getting started"). On Linux it needs a desktop session for its window (the packages of the Linux setup are enough).
+2. **Configure** it: copy [CamDisplay/display.cfg.example](CamDisplay/display.cfg.example) to `display.cfg` in the folder of the executable and set at least `server_ip` (the address of the computer, on which the server runs). The other settings are described in the example.
+3. **Start** `CamDisplay` from the folder of the executable. Everything can also be given on the command line: `CamDisplay --server_ip=192.168.1.20 --camera="Front door"`.
+
+- **What it shows:** all cameras next to each other in a grid (1 camera fills the screen, 2 are side by side, 4 are 2 x 2, ...), or only one camera, if `camera` is set. The name of every camera is written into its picture. A camera, which stopped sending, is shown as "no signal", and disappears after 30 seconds. While the display cannot reach the server, it says so on the screen, and it connects by itself as soon as the server is there (also after the server was restarted or the network was down).
+- **Fullscreen:** the window always covers the whole screen, without a border or a title bar. **`Esc` shuts the display down** (`Q` does the same, `Ctrl+C` in the terminal too).
+- **Network load:** the server sends the pictures to every display (compressed, like the cameras send them to the server), at most `max_fps` frames per second per camera. A weak device or Wi-Fi needs a lower value.
+- **Test without a window:** `CamDisplay --save_snapshot=picture.jpg` does not open a window, but stores the first picture it would show in the file, and quits (add `--snapshot_min_cameras=2` to wait for two cameras). This is the quickest check, that the display reaches the server and receives pictures.
+- **Autostart on a Raspberry Pi** (display started with the desktop): create `~/.config/autostart/camvision-display.desktop` with the content below (adjust the path), then restart the Pi.
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=CamVision display
+Path=/home/pi/CamVision/CamDisplay/bin/Release-linux/CamDisplay
+Exec=/home/pi/CamVision/CamDisplay/bin/Release-linux/CamDisplay
+```
+
+**Security:** the connection is not encrypted and not authenticated. Everybody, who can reach the server in the network, can connect a display and see all cameras. Use it only in a network you trust (the home network behind your router), and never open the port of the server to the internet.
+
 # Face detection and recognition
 
-The server can find faces in the camera feeds and recognize known people. It is off by default, and runs on the **server** (it analyzes the latest frame of every camera a few times per second, so the cameras stay lightweight). Faces are marked in the preview windows (green: known person, red: unknown person), and the log reports who is seen (once per person and camera every 30 seconds, optionally with a photo).
+The server can find faces in the camera feeds and recognize known people. It is off by default, and runs on the **server** (it analyzes the latest frame of every camera a few times per second, so the cameras stay lightweight). Faces are marked in the preview windows of the server **and on the displays** (green: known person, red: unknown person), and the log reports who is seen (once per person and camera every 30 seconds, optionally with a photo).
 
 It uses the models YuNet (detection) and SFace (recognition) of OpenCV, no other library is needed. This needs **OpenCV 4.5.4 or newer** (the Windows build uses 4.14, on Linux check `pkg-config --modversion opencv4`). The processing runs on the CPU: use a **Release build** of the server, the Debug build is many times slower.
 
 1. **Download the two model files** into `CamServer/models/` (links and sizes are in [CamServer/models/README.md](CamServer/models/README.md), about 37 MB together). The face detection works with the first file alone, the recognition needs both.
 2. **Add the photos of the known people** into `CamServer/known_faces/`, one folder per person (see [CamServer/known_faces/README.md](CamServer/known_faces/README.md)). Photos can be added while the server is running.
 3. **Turn it on:** `faces = true` in `server.cfg` (or `--faces=true`). The other settings are explained in [CamServer/server.cfg.example](CamServer/server.cfg.example).
+
+**Faces on the displays:** the server draws the boxes and names into the pictures before it sends them to the displays, so every display shows the same as the preview of the server. The pictures keep their frame rate, the boxes are those of the latest analysis (up to `1 / face_fps` seconds old, and they disappear, if the analysis stops for 2 seconds). The server draws and compresses a picture once, even if several displays show it. This costs nothing noticeable in a Release build, but a lot in a Debug build. `face_on_displays = false` sends the plain pictures instead.
 
 **Check the setup without a camera:** `CamServer --face_test=photo.jpg` analyzes one photo, prints the faces it finds (and who they are), and stores `photo.jpg.faces.jpg` with the faces marked. Run it from the folder of the executable like the server. A face, which is not recognized, shows the best similarity and the needed value, so `face_match_threshold` can be tuned.
 
@@ -195,7 +221,7 @@ The project currently supports these features:
 
 - self-updater: The self updater enables you, to very easily ship new versions to all in-use cameras or displays. You only have to drag-and-drop the update package into a pre-defined folder on the server, the running server listens to this pre-defined folder and recognizes a file system change, re-assembles the update into a transferrable package and ships it to all registered clients fully automated.
 - Server/Client system for the camera: The Server/client system has the advantage, that each camera device doesn't have to have a large drive for the videos. It sends the camera feed over the native socket implementation to the server. The server stores the video feed of each camera in a separate ring queue, which has a configurable size. This enables the user to store the last N minutes on demand.
-- Different client types: This system currently supports two different client types. The first type is a camera client, which records each frame from a connected camera and sends the frames to the server. The second type is a display client, which gets a live feed from the server from each camera and can display the camera feed on a connected display. The system has these two different types, because not every camera might have a display connected directly to it. In this way, you can setup multiple raspberrys, which are located at different locations and server different roles.
+- Different client types: This system currently supports two different client types. The first type is a camera client, which records each frame from a connected camera and sends the frames to the server. The second type is a display client (see "Displays"), which gets a live feed from the server from each camera and can display the camera feed on a connected display. The system has these two different types, because not every camera might have a display connected directly to it. In this way, you can setup multiple raspberrys, which are located at different locations and server different roles.
 
 # Planned features
 

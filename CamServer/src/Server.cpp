@@ -1,10 +1,12 @@
 #include "Server.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <unordered_set>
 
 #include "Messages.h"
@@ -24,13 +26,15 @@ Server::Server(const ServerConfig &config)
 
 	std::string cwd = "";
 	Core::FileSystem::Get()->GetCurrentWorkingDirectory(&cwd);
-	m_Version = Core::utils::GetLocalVersion(cwd);
+	// The protocol version is independent of the version of the software (CAM_VERSION).
+	m_Version = CAM_PROTOCOL_VERSION;
+	uint32 software_version = Core::utils::GetLocalVersion(cwd);
 
 	CAM_LOG_INFO("===================== CONFIG ===================================");
 	CAM_LOG_INFO("IP                    : {}", config.ServerIP);
 	CAM_LOG_INFO("Port                  : {}", config.Port);
 	CAM_LOG_INFO("Video backup duration : {}", config.VideoBackupDuration);
-	CAM_LOG_INFO("Current Server version: {}", m_Version);
+	CAM_LOG_INFO("Current Server version: {0} (protocol {1})", software_version, m_Version);
 	CAM_LOG_INFO("Current CWD           : {}", cwd);
 	CAM_LOG_INFO("================================================================");
 }
@@ -52,6 +56,11 @@ Server::~Server()
 		m_ReaperThread.join();
 	}
 
+	if (m_ForwardThread.joinable())
+	{
+		m_ForwardThread.join();
+	}
+
 	m_Clients.clear();
 
 	delete m_Socket;
@@ -67,6 +76,8 @@ void Server::Run()
 	{
 		m_ReaperThread = std::thread(&Server::ReapStaleClients, std::ref(*this));
 	}
+
+	m_ForwardThread = std::thread(&Server::ForwardLoop, std::ref(*this));
 
 	for (;;)
 	{
@@ -106,6 +117,11 @@ void Server::Run()
 	if (m_ReaperThread.joinable())
 	{
 		m_ReaperThread.join();
+	}
+
+	if (m_ForwardThread.joinable())
+	{
+		m_ForwardThread.join();
 	}
 }
 
@@ -148,6 +164,10 @@ bool Server::Step()
 
 		case CLIENT_HEARTBEAT:
 			message_success = OnClientHeartbeat(addr, BUF, len);
+			break;
+
+		case DISPLAY_CONNECTION_START:
+			message_success = OnDisplayConnected(addr, BUF, len);
 			break;
 	}
 
@@ -203,6 +223,7 @@ bool Server::OnClientConnected(Core::addr_t &clientAddr, Byte *message, int32 ad
 
 			auto client = std::make_unique<ClientEntry>(frames);
 			client->Address = clientAddr;
+			client->CameraId = m_NextCameraId++;
 			client->FrameTitle = name;
 			m_Clients.push_back(std::move(client));
 		}
@@ -247,6 +268,15 @@ bool Server::OnClientDisconnected(Core::addr_t &clientAddr, Byte *message, int32
 			m_Clients.erase(it);
 			client_removed = true;
 		}
+
+		// A display disconnects with the same message.
+		auto display = std::find_if(m_Displays.begin(), m_Displays.end(), [&](const auto &d) { return d->Address.Value == clientAddr.Value; });
+		if (display != m_Displays.end())
+		{
+			CAM_LOG_INFO("Display {0} ({1}) disconnected.", clientAddr.Value, (*display)->Name);
+			m_Displays.erase(display);
+			client_removed = true;
+		}
 	}
 
 	ServerConnectionCloseResponse response = {};
@@ -272,13 +302,247 @@ bool Server::OnClientHeartbeat(Core::addr_t &clientAddr, Byte *message, int32 ad
 	if (client)
 	{
 		client->LastSeen = std::chrono::steady_clock::now();
-	}
-	else
-	{
-		SendClientUnknown(clientAddr);
+		return true;
 	}
 
+	for (auto &display : m_Displays)
+	{
+		if (display->Address.Value == clientAddr.Value)
+		{
+			display->LastSeen = std::chrono::steady_clock::now();
+			return true;
+		}
+	}
+
+	SendClientUnknown(clientAddr);
 	return true;
+}
+
+static bool EqualsIgnoreCase(const std::string &a, const std::string &b)
+{
+	return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](unsigned char x, unsigned char y) { return std::tolower(x) == std::tolower(y); });
+}
+
+bool Server::OnDisplayConnected(Core::addr_t &displayAddr, Byte *message, int32 addrLen)
+{
+	DisplayConnectionStartMessage *msg = (DisplayConnectionStartMessage *)message;
+	if (msg->Header.Version != m_Version)
+	{
+		CAM_LOG_ERROR("Display {}: the protocol version does not match with the server!", displayAddr.Value);
+		return false;
+	}
+
+	if (addrLen != sizeof(DisplayConnectionStartMessage))
+	{
+		CAM_LOG_ERROR("Request size was not as expected!");
+		return false;
+	}
+
+	// The names come from the network, make sure they are terminated.
+	char name[MAX_FRAME_NAME_LENGTH];
+	char filter[MAX_FRAME_NAME_LENGTH];
+	memcpy(name, msg->DisplayName, MAX_FRAME_NAME_LENGTH);
+	memcpy(filter, msg->CameraFilter, MAX_FRAME_NAME_LENGTH);
+	name[MAX_FRAME_NAME_LENGTH - 1] = 0;
+	filter[MAX_FRAME_NAME_LENGTH - 1] = 0;
+
+	// Nobody needs more than a video frame rate, and the server decides if the display has no wish.
+	uint32 max_fps = msg->MaxFPS == 0 ? 10 : std::min<uint32>(msg->MaxFPS, 60);
+
+	{
+		std::lock_guard<std::mutex> lock(m_ClientsMutex);
+
+		DisplayEntry *display = nullptr;
+		for (auto &existing : m_Displays)
+		{
+			if (existing->Address.Value == displayAddr.Value)
+			{
+				display = existing.get();
+				break;
+			}
+		}
+
+		if (!display)
+		{
+			m_Displays.push_back(std::make_unique<DisplayEntry>());
+			display = m_Displays.back().get();
+			display->Address = displayAddr;
+			CAM_LOG_INFO("Display {0} ({1}) connected, showing {2}, up to {3} frames per second per camera.", displayAddr.Value, name, filter[0] ? std::string(filter) : std::string("all cameras"), max_fps);
+		}
+
+		// A repeated request (the response got lost, or the display changed its wishes) is accepted as well.
+		display->Name = name;
+		display->CameraFilter = filter;
+		display->MaxFPS = max_fps;
+		display->LastSeen = std::chrono::steady_clock::now();
+	}
+
+	ServerDisplayStartResponse response = {};
+	response.Header.Type = SERVER_DISPLAY_START;
+	response.Header.Version = m_Version;
+	response.Accepted = true;
+	m_Socket->Send(&response, sizeof(response), displayAddr);
+	return true;
+}
+
+void Server::SendFrameToDisplay(const Core::addr_t &display, uint32 cameraId, const std::string &cameraName, uint32 frameNumber, const EncodedFrame &frame)
+{
+	if (!frame || frame->empty())
+	{
+		return;
+	}
+
+	uint32 frame_size = (uint32)frame->size();
+	uint32 chunk_count = (frame_size + FRAME_CHUNK_PAYLOAD_SIZE - 1) / FRAME_CHUNK_PAYLOAD_SIZE;
+	if (chunk_count == 0 || chunk_count > 0xFFFF)
+	{
+		return;
+	}
+
+	Byte packet[sizeof(ServerFrameChunkMessage) + FRAME_CHUNK_PAYLOAD_SIZE];
+	ServerFrameChunkMessage *chunk = (ServerFrameChunkMessage *)packet;
+	memset(chunk, 0, sizeof(ServerFrameChunkMessage));
+	chunk->Header.Type = SERVER_FRAME_CHUNK;
+	chunk->Header.Version = m_Version;
+	chunk->CameraId = cameraId;
+	memcpy(chunk->CameraName, cameraName.c_str(), std::min<size_t>(cameraName.size(), MAX_FRAME_NAME_LENGTH - 1));
+	chunk->FrameId = frameNumber;
+	chunk->FrameSize = frame_size;
+	chunk->ChunkCount = (uint16)chunk_count;
+
+	for (uint32 i = 0; i < chunk_count; ++i)
+	{
+		uint32 offset = i * FRAME_CHUNK_PAYLOAD_SIZE;
+		uint32 payload_size = std::min(FRAME_CHUNK_PAYLOAD_SIZE, frame_size - offset);
+		chunk->ChunkIndex = (uint16)i;
+		memcpy(packet + sizeof(ServerFrameChunkMessage), frame->data() + offset, payload_size);
+
+		uint32 packet_size = sizeof(ServerFrameChunkMessage) + payload_size;
+		if (m_Socket->Send(packet, packet_size, display) != (int32)packet_size)
+		{
+			// Frames are never retransmitted, the display drops the incomplete frame as soon as a newer one arrives.
+			return;
+		}
+	}
+}
+
+void Server::ForwardLoop()
+{
+	// The faces of the latest analysis are drawn for this long. Later the analysis is considered to be stalled, and the pictures are sent without faces.
+	const int64 faces_valid_ms = 2000;
+
+	struct Job
+	{
+		Core::addr_t Display;
+		uint32 CameraId;
+		std::string CameraName;
+		uint32 FrameNumber;
+		EncodedFrame Frame;
+		std::vector<FaceResult> Faces;
+		bool Recognition;
+	};
+
+	while (m_Running)
+	{
+		// Only hold the lock while collecting what has to be sent, rendering and sending take long.
+		std::vector<Job> jobs;
+		int64 now = Core::QueryMS();
+		bool recognition = m_FaceAnalyzer && m_FaceAnalyzer->CanRecognize();
+		bool draw_faces = m_FaceAnalyzer && m_Config.Faces.DrawOnDisplays;
+		{
+			std::lock_guard<std::mutex> lock(m_ClientsMutex);
+			for (auto &display : m_Displays)
+			{
+				// A display on a weak device or on Wi-Fi asks for fewer frames.
+				int64 interval_ms = 1000 / std::max<uint32>(display->MaxFPS, 1);
+
+				for (auto &client : m_Clients)
+				{
+					if (!client->LatestFrame || client->LatestFrameNumber == 0)
+					{
+						continue;
+					}
+
+					// The display sees one camera, or all of them.
+					if (!display->CameraFilter.empty() && !EqualsIgnoreCase(display->CameraFilter, client->FrameTitle))
+					{
+						continue;
+					}
+
+					// Every frame is sent only once to a display, and not more often than the display wants.
+					uint32 &last_number = display->LastSentNumber[client->CameraId];
+					int64 &last_sent = display->LastSentMS[client->CameraId];
+					if (last_number == client->LatestFrameNumber || (last_sent != 0 && now - last_sent < interval_ms))
+					{
+						continue;
+					}
+
+					last_number = client->LatestFrameNumber;
+					last_sent = now;
+
+					Job job;
+					job.Display = display->Address;
+					job.CameraId = client->CameraId;
+					job.CameraName = client->FrameTitle;
+					job.FrameNumber = client->LatestFrameNumber;
+					job.Frame = client->LatestFrame;
+					job.Recognition = recognition;
+					if (draw_faces && !client->Faces.empty() && now - client->FacesUpdatedMS <= faces_valid_ms)
+					{
+						job.Faces = client->Faces;
+					}
+
+					jobs.push_back(std::move(job));
+				}
+			}
+		}
+
+		if (jobs.empty())
+		{
+			Core::SleepMS(5);
+			continue;
+		}
+
+		// A frame, which goes to several displays, is rendered only once.
+		std::map<std::pair<uint32, uint32>, EncodedFrame> rendered;
+		for (const Job &job : jobs)
+		{
+			EncodedFrame frame = job.Frame;
+			if (!job.Faces.empty())
+			{
+				auto key = std::make_pair(job.CameraId, job.FrameNumber);
+				auto it = rendered.find(key);
+				if (it == rendered.end())
+				{
+					EncodedFrame with_faces;
+					try
+					{
+						cv::Mat image = cv::imdecode(*job.Frame, cv::IMREAD_COLOR);
+						if (!image.empty())
+						{
+							DrawFaces(image, job.Faces, job.Recognition);
+							auto encoded = std::make_shared<std::vector<uchar>>();
+							if (cv::imencode(".jpg", image, *encoded, { cv::IMWRITE_JPEG_QUALITY, 80 }))
+							{
+								with_faces = encoded;
+							}
+						}
+					}
+					catch (const cv::Exception &e)
+					{
+						CAM_LOG_ERROR("Could not draw the faces into the picture for the displays: {}", e.what());
+					}
+
+					// If it did not work, the plain picture is sent.
+					it = rendered.emplace(key, with_faces ? with_faces : job.Frame).first;
+				}
+
+				frame = it->second;
+			}
+
+			SendFrameToDisplay(job.Display, job.CameraId, job.CameraName, job.FrameNumber, frame);
+		}
+	}
 }
 
 void Server::SendClientUnknown(Core::addr_t &clientAddr)
@@ -304,6 +568,19 @@ void Server::ReapStaleClients()
 			{
 				CAM_LOG_INFO("Client {0} ({1}) timed out after {2} seconds without a message, removing it.", (*it)->Address.Value, (*it)->FrameTitle, m_Config.ClientTimeoutSeconds);
 				it = m_Clients.erase(it);
+			}
+			else
+			{
+				++it;
+			}
+		}
+
+		for (auto it = m_Displays.begin(); it != m_Displays.end();)
+		{
+			if (now - (*it)->LastSeen > timeout)
+			{
+				CAM_LOG_INFO("Display {0} ({1}) timed out after {2} seconds without a message, removing it.", (*it)->Address.Value, (*it)->Name, m_Config.ClientTimeoutSeconds);
+				it = m_Displays.erase(it);
 			}
 			else
 			{
@@ -617,6 +894,22 @@ static std::string SafeName(const std::string &name)
 	return result.empty() ? "unnamed" : result;
 }
 
+// For messages: 2026-10-02 22:31:07
+static std::string ReadableTimeString()
+{
+	std::time_t now = std::time(nullptr);
+	std::tm local = {};
+#ifdef _WIN32
+	localtime_s(&local, &now);
+#else
+	localtime_r(&now, &local);
+#endif
+
+	char buffer[32];
+	strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &local);
+	return buffer;
+}
+
 static std::string TimestampString()
 {
 	std::time_t now = std::time(nullptr);
@@ -704,6 +997,7 @@ void Server::FaceLoop()
 					if (client->Address.Value == job.Address)
 					{
 						client->Faces = faces;
+						client->FacesUpdatedMS = Core::QueryMS();
 						break;
 					}
 				}
@@ -713,6 +1007,8 @@ void Server::FaceLoop()
 			bool recognition = m_FaceAnalyzer->CanRecognize();
 			bool snapshot_needed = false;
 			std::string snapshot_identity;
+			bool unknown_person = false;
+			FaceResult unknown_face;
 			for (const FaceResult &face : faces)
 			{
 				std::string identity = face.Recognized ? face.Name : (recognition ? "unknown" : "face");
@@ -731,6 +1027,13 @@ void Server::FaceLoop()
 				else if (recognition)
 				{
 					CAM_LOG_INFO("{0}: unknown person (best similarity {1:.2f})", job.Title, face.Similarity);
+
+					// Only with recognition, a face can be "unknown". Without it, every face is just a face.
+					if (!unknown_person)
+					{
+						unknown_person = true;
+						unknown_face = face;
+					}
 				}
 				else
 				{
@@ -744,6 +1047,7 @@ void Server::FaceLoop()
 				}
 			}
 
+			std::string snapshot_file;
 			if (snapshot_needed && config.Snapshots)
 			{
 				try
@@ -757,6 +1061,7 @@ void Server::FaceLoop()
 					if (cv::imwrite(file, marked))
 					{
 						CAM_LOG_INFO("Snapshot stored: {}", file);
+						snapshot_file = file;
 					}
 					else
 					{
@@ -768,6 +1073,22 @@ void Server::FaceLoop()
 					CAM_LOG_ERROR("Could not store the snapshot: {}", e.what());
 				}
 			}
+
+			if (unknown_person)
+			{
+				NotifyUnknownPerson(job.Title, unknown_face, snapshot_file);
+			}
 		}
 	}
+}
+
+void Server::NotifyUnknownPerson(const std::string &camera, const FaceResult &face, const std::string &snapshotFile)
+{
+	// TODO: Send this as an email to the owner. For now, only the email, which would be sent, is written to the log.
+	//       Still to do for the real email: SMTP settings (server, port, user, password, sender, recipients) in server.cfg, sending without blocking the
+	//       face analysis, the snapshot as an attachment, and a limit for the number of emails, if somebody walks around in front of several cameras.
+	CAM_LOG_WARN("[TODO email] Would send an email to the owner. Subject: \"Unknown person at {0}\". Text: An unknown person was seen by the camera {0} at {1}. "
+		"Best similarity to a known person: {2:.2f} (needed {3:.2f}), detector score {4:.2f}. Snapshot: {5}",
+		camera, ReadableTimeString(), face.Similarity, m_Config.Faces.MatchThreshold, face.Score,
+		snapshotFile.empty() ? std::string("none (face_snapshots is off)") : snapshotFile);
 }

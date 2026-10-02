@@ -58,6 +58,7 @@ int main(int argc, char *argv[])
 	faces.MatchThreshold = settings.GetFloat("face_match_threshold", faces.MatchThreshold);
 	faces.DetectWidth = std::max(settings.GetInt("face_detect_width", faces.DetectWidth), 0);
 	faces.FPS = (uint32)std::max(settings.GetInt("face_fps", faces.FPS), 1);
+	faces.DrawOnDisplays = settings.GetBool("face_on_displays", faces.DrawOnDisplays);
 	faces.Snapshots = settings.GetBool("face_snapshots", faces.Snapshots);
 	faces.SnapshotPath = settings.GetString("face_snapshot_path", faces.SnapshotPath);
 	faces.EventCooldownSeconds = (uint32)std::max(settings.GetInt("face_event_cooldown", faces.EventCooldownSeconds), 0);

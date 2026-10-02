@@ -1,0 +1,77 @@
+[22:56:17] App: Loaded settings from server.cfg
+[22:56:17] App: ===================== CONFIG ===================================
+[22:56:17] App: IP                    : 0.0.0.0
+[22:56:17] App: Port                  : 45645
+[22:56:17] App: Video backup duration : 5
+[22:56:17] App: Current Server version: 100 (protocol 100)
+[22:56:17] App: Current CWD           : C:\Dev\CamVision\CamServer
+[22:56:17] App: ================================================================
+[22:56:17] App: Known faces: 1 people from 1 photos (0 photos without a usable face).
+[22:56:17] App: Face analysis started: 3 per second per camera, 1 known people.
+[22:56:17] App: Waiting for clients to connect...
+[22:56:47] App: Client 194557740318847 connected successfully!
+[22:56:47] App: Client #1: Can recognized (similarity 0.60)
+[22:56:49] App: Client Client #1: 100 frames received, 0 dropped incomplete.
+[22:56:51] App: Client Client #1: 200 frames received, 0 dropped incomplete.
+[22:56:53] App: Client Client #1: 300 frames received, 0 dropped incomplete.
+[22:56:55] App: Client Client #1: 400 frames received, 0 dropped incomplete.
+[22:56:56] App: Client Client #1: 500 frames received, 0 dropped incomplete.
+[22:56:58] App: Client #1: unknown person (best similarity 0.36)
+[22:56:58] App: [TODO email] Would send an email to the owner. Subject: "Unknown person at Client #1". Text: An unknown person was seen by the camera Client #1 at 2026-10-02 22:56:58. Best similarity to a known person: 0.36 (needed 0.36), detector score 0.91. Snapshot: none (face_snapshots is off)
+[22:56:58] App: Client Client #1: 600 frames received, 0 dropped incomplete.
+[22:57:00] App: Client Client #1: 700 frames received, 0 dropped incomplete.
+[22:57:02] App: Client Client #1: 800 frames received, 0 dropped incomplete.
+[22:57:03] App: Client Client #1: 900 frames received, 0 dropped incomplete.
+[22:57:05] App: Client Client #1: 1000 frames received, 0 dropped incomplete.
+[22:57:07] App: Client Client #1: 1100 frames received, 0 dropped incomplete.
+[22:57:09] App: Client Client #1: 1200 frames received, 0 dropped incomplete.
+[22:57:11] App: Client Client #1: 1300 frames received, 0 dropped incomplete.
+[22:57:13] App: Client Client #1: 1400 frames received, 0 dropped incomplete.
+[22:57:14] App: Client Client #1: 1500 frames received, 0 dropped incomplete.
+[22:57:16] App: Client Client #1: 1600 frames received, 0 dropped incomplete.
+[22:57:17] App: Client #1: Can recognized (similarity 0.41)
+[22:57:18] App: Client Client #1: 1700 frames received, 0 dropped incomplete.
+[22:57:20] App: Client Client #1: 1800 frames received, 0 dropped incomplete.
+[22:57:22] App: Client Client #1: 1900 frames received, 0 dropped incomplete.
+[22:57:23] App: Client Client #1: 2000 frames received, 0 dropped incomplete.
+[22:57:25] App: Client Client #1: 2100 frames received, 0 dropped incomplete.
+[22:57:27] App: Client Client #1: 2200 frames received, 0 dropped incomplete.
+[22:57:29] App: Client #1: unknown person (best similarity 0.34)
+[22:57:29] App: [TODO email] Would send an email to the owner. Subject: "Unknown person at Client #1". Text: An unknown person was seen by the camera Client #1 at 2026-10-02 22:57:29. Best similarity to a known person: 0.34 (needed 0.36), detector score 0.88. Snapshot: none (face_snapshots is off)
+[22:57:29] App: Client Client #1: 2300 frames received, 0 dropped incomplete.
+[22:57:31] App: Client Client #1: 2400 frames received, 0 dropped incomplete.
+[22:57:32] App: Client Client #1: 2500 frames received, 0 dropped incomplete.
+[22:57:34] App: Client Client #1: 2600 frames received, 0 dropped incomplete.
+[22:57:36] App: Client Client #1: 2700 frames received, 0 dropped incomplete.
+[22:57:38] App: Client Client #1: 2800 frames received, 0 dropped incomplete.
+[22:57:40] App: Client Client #1: 2900 frames received, 0 dropped incomplete.
+[22:57:42] App: Client Client #1: 3000 frames received, 0 dropped incomplete.
+[22:57:43] App: Client Client #1: 3100 frames received, 0 dropped incomplete.
+[22:57:45] App: Client Client #1: 3200 frames received, 0 dropped incomplete.
+[22:57:47] App: Client Client #1: 3300 frames received, 0 dropped incomplete.
+[22:57:48] App: Client #1: Can recognized (similarity 0.56)
+[22:57:49] App: Client Client #1: 3400 frames received, 0 dropped incomplete.
+[22:57:51] App: Client Client #1: 3500 frames received, 0 dropped incomplete.
+[22:57:52] App: Client Client #1: 3600 frames received, 0 dropped incomplete.
+[22:57:54] App: Client Client #1: 3700 frames received, 0 dropped incomplete.
+[22:57:56] App: Client Client #1: 3800 frames received, 0 dropped incomplete.
+[22:57:58] App: Client Client #1: 3900 frames received, 0 dropped incomplete.
+[22:58:00] App: Client Client #1: 4000 frames received, 0 dropped incomplete.
+[22:58:01] App: Client Client #1: 4100 frames received, 0 dropped incomplete.
+[22:58:17] App: Client 194557740318847 (Client #1) timed out after 15 seconds without a message, removing it.
+[22:58:35] App: Client 180118060269695 connected successfully!
+[22:58:35] App: Client #1: Can recognized (similarity 0.56)
+[22:58:37] App: Client Client #1: 100 frames received, 0 dropped incomplete.
+[22:58:39] App: Client Client #1: 200 frames received, 0 dropped incomplete.
+[22:58:40] App: Client Client #1: 300 frames received, 0 dropped incomplete.
+[22:58:42] App: Client Client #1: 400 frames received, 0 dropped incomplete.
+[22:58:43] App: Display 194411711430783 (Display #1) connected, showing all cameras, up to 10 frames per second per camera.
+[22:58:44] App: Client Client #1: 500 frames received, 0 dropped incomplete.
+[22:58:46] App: Client Client #1: 600 frames received, 0 dropped incomplete.
+[22:58:48] App: Client Client #1: 700 frames received, 0 dropped incomplete.
+[22:58:50] App: Client Client #1: 800 frames received, 0 dropped incomplete.
+[22:58:52] App: Client Client #1: 900 frames received, 0 dropped incomplete.
+[22:58:53] App: Display 194411711430783 (Display #1) disconnected.
+[22:58:53] App: Client 194411711430783 disconnected successfully!
+[22:58:54] App: Client Client #1: 1000 frames received, 0 dropped incomplete.
+[22:58:56] App: Client Client #1: 1100 frames received, 0 dropped incomplete.
