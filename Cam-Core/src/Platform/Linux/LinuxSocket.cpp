@@ -2,6 +2,7 @@
 
 #ifdef CAM_PLATFORM_LINUX
 
+#include <cerrno>
 #include <iostream>
 #include <assert.h>
 #include <netdb.h>

@@ -59,7 +59,8 @@ void Camera::OpenStream()
 #ifdef CAM_PLATFORM_WINDOWS
 	opened = TryOpenStream(cv::CAP_DSHOW, true) || TryOpenStream(cv::CAP_DSHOW, false) || TryOpenStream(cv::CAP_MSMF, false);
 #else
-	opened = TryOpenStream(cv::CAP_ANY, true) || TryOpenStream(cv::CAP_ANY, false);
+	// Video4Linux is the native camera API on Linux (USB cameras, Raspberry Pi), fall back to whatever OpenCV finds.
+	opened = TryOpenStream(cv::CAP_V4L2, true) || TryOpenStream(cv::CAP_V4L2, false) || TryOpenStream(cv::CAP_ANY, false);
 #endif
 
 	if (!opened)

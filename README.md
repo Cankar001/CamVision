@@ -4,15 +4,149 @@ CamVision is an open source security camera project. It uses OpenCV for image an
 
 # Getting started
 
-## Clone the repository and navigate into the git folder
+Windows (Visual Studio 2022) and Linux (including the Raspberry Pi) are supported. The project files are generated with premake5, the generated files are not part of the repository.
+
+## Windows
+
 ```shell
 git clone https://github.com/Cankar001/CamVision && cd CamVision
-```
-
-## Generate the visual studio solution or makefiles
-```shell
 python Setup.py
 ```
+
+`Setup.py` fetches the large files from git lfs (the bundled OpenCV 4.14 for Windows), and generates `CamVision.sln` for Visual Studio 2022. Open it, select `Debug` or `Release` with `x64` and build the solution.
+
+## Linux (Debian, Ubuntu, Raspberry Pi OS)
+
+This works on a normal PC (x86_64) as well as on a Raspberry Pi (32 or 64 bit ARM). Linux does not use the OpenCV files from the repository, it uses the OpenCV of the system. Everything is built on the machine, on which it will run.
+
+### 1. Install the packages
+
+```shell
+sudo apt update
+sudo apt install build-essential git python3 pkg-config libopencv-dev libssl-dev uuid-dev v4l-utils
+```
+
+- `build-essential`: compiler (GCC 9 or newer is required (Debian 11 "Bullseye" or newer, Ubuntu 20.04 or newer, Raspberry Pi OS Bullseye or newer), the project uses C++17 and std::filesystem) and `make`.
+- `libopencv-dev`: OpenCV 4.x including its dependencies (GTK for the preview windows, Video4Linux for cameras). Check it with `pkg-config --modversion opencv4`, which must print a `4.x` version.
+- `libssl-dev`: OpenSSL, used for the signatures of the updater.
+- `uuid-dev`: only needed to build premake5 in step 2.
+- `v4l-utils`: optional, lists the connected cameras.
+
+### 2. Get premake5
+
+The repository contains a premake5 for x86_64 Linux. `Setup.py` uses it automatically on x86_64 PCs, so you can skip this step there. **On ARM (Raspberry Pi) you have to build premake5 once yourself:**
+
+```shell
+git clone --recurse-submodules https://github.com/premake/premake-core.git
+cd premake-core
+make -f Bootstrap.mak linux
+sudo install -m 755 bin/release/premake5 /usr/local/bin/premake5
+cd ..
+premake5 --version
+```
+
+This takes a few minutes on a Raspberry Pi. `Setup.py` always prefers a `premake5` found on the system.
+
+### 3. Clone the repository and generate the makefiles
+
+```shell
+GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/Cankar001/CamVision
+cd CamVision
+python3 Setup.py
+```
+
+`GIT_LFS_SKIP_SMUDGE=1` only matters if git lfs is installed, it avoids downloading the Windows only OpenCV binaries (nearly 1 GB), which Linux does not need. `Setup.py` creates a `Makefile` in the main folder and in every project folder.
+
+### 4. Build
+
+```shell
+make config=release -j2
+```
+
+- Use `-j2` on a Raspberry Pi 3 or other devices with 1 GB of RAM or less (more parallel compiler jobs can run out of memory). On a PC use `-j$(nproc)`.
+- `config=debug` creates a debug build instead.
+- To build a single program, name it: `make config=release CamClient` (`CamServer`, `CamDisplay`, `UpdateClient` and `UpdateServer` work as well).
+- The programs are created in `<Project>/bin/<Configuration>-linux/<Project>/`, for example `CamClient/bin/Release-linux/CamClient/CamClient`.
+- After pulling new changes that add or remove source files, run `python3 Setup.py` again, to regenerate the makefiles. To start from scratch: `make clean`.
+
+### 5. Run
+
+Start every program **from the folder, in which its executable is located**, the programs expect this working directory.
+
+Camera client (for example on the Raspberry Pi):
+
+```shell
+cd CamClient/bin/Release-linux/CamClient
+cp ../../../client.cfg.example client.cfg
+nano client.cfg          # set at least server_ip, and camera_index
+./CamClient
+```
+
+Server:
+
+```shell
+cd CamServer/bin/Release-linux/CamServer
+cp ../../../server.cfg.example ../../../server.cfg    # the server reads server.cfg from the CamServer folder
+./CamServer
+```
+
+Notes for the camera client:
+
+- **Camera index:** it is the number of the `/dev/videoN` device. Run `v4l2-ctl --list-devices` to see the cameras. A USB camera often shows up twice (`/dev/video0` for the image, `/dev/video1` for metadata), use the first one. The client logs `Camera N: using backend ...` when the camera works.
+- **Permissions:** your user must be allowed to use the camera: `sudo usermod -aG video $USER`, then log out and in again (on Raspberry Pi OS the default user is already in this group).
+- **No display (headless):** set `headless = true` in `client.cfg` for devices without a monitor, otherwise the client tries to open a preview window and needs a desktop session. Stop it with `Ctrl+C`, the client then disconnects cleanly.
+- **Weak devices / slow Wi-Fi:** lower the load with `send_width = 640`, `max_fps = 15` and `jpeg_quality = 65` in `client.cfg`.
+- **Raspberry Pi camera modules (CSI):** the client uses Video4Linux. Current Raspberry Pi OS versions drive CSI cameras with libcamera, which does not appear as a normal `/dev/videoN` device. USB cameras work directly, CSI cameras need the libcamera V4L2 compatibility layer (not covered here).
+
+### Start the camera client automatically (systemd)
+
+Create `/etc/systemd/system/camvision-client.service` (adjust the user and the paths):
+
+```ini
+[Unit]
+Description=CamVision camera client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/CamVision/CamClient/bin/Release-linux/CamClient
+ExecStart=/home/pi/CamVision/CamClient/bin/Release-linux/CamClient/CamClient --headless
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```shell
+sudo systemctl daemon-reload
+sudo systemctl enable --now camvision-client
+journalctl -u camvision-client -f      # shows the log
+```
+
+### Troubleshooting
+
+| Problem | Solution |
+|---|---|
+| `Package opencv4 was not found` | Install `libopencv-dev` (step 1). On very old systems the package is called `opencv` instead of `opencv4`, use a distribution with OpenCV 4. |
+| `premake5: command not found` / `Setup.py` says no premake5 found | Build and install premake5 (step 2). |
+| `fatal error: openssl/...: No such file` | Install `libssl-dev`. |
+| `c++: internal compiler error: Killed` or the build freezes | Out of memory: use `make -j1` and/or add swap (`sudo dphys-swapfile swapoff && sudo nano /etc/dphys-swapfile`, set `CONF_SWAPSIZE=1024`, `sudo dphys-swapfile setup && sudo dphys-swapfile swapon`). |
+| `Camera N: could not be opened ...` | Wrong `camera_index`, no permission for `/dev/videoN` (see above), or the camera is used by another program. |
+| `Could not connect to server` | Check `server_ip` and `server_port`, the server must be running, and UDP on the server port must be allowed by the firewall of the server. |
+| `Gtk-WARNING: cannot open display` | There is no desktop session. Set `headless = true` (client) or `preview = false` (server). |
+
+# Configuration
+
+The camera client and the server are configured with a simple settings file and/or command line arguments. Command line arguments override the file, for example `./CamClient --camera_index=2 --max_fps=15`. Use `--config=path` to load a different file. Settings, which are not set, use their default values.
+
+The complete list with explanations is in the example files, copy them and edit the copy:
+
+- [CamClient/client.cfg.example](CamClient/client.cfg.example): server address and port, camera index and size, headless mode, JPEG quality and bandwidth tuning (`send_width`, `max_fps`).
+- [CamServer/server.cfg.example](CamServer/server.cfg.example): port, minutes of video kept per camera, timeout for dead clients, preview windows.
+
+The client reads `client.cfg` from the folder, in which it is started. The server reads `server.cfg` from the `CamServer` project folder.
 
 # Features
 

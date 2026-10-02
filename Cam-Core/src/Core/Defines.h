@@ -31,7 +31,7 @@
 
 #elif defined(__clang__)
 
-#define CAM_DLL_EXPORT __attribute__ ((_visibility_ ("default")))
+#define CAM_DLL_EXPORT __attribute__ ((visibility ("default")))
 #define CAM_DLL_IMPORT /* NOTHING */
 #define CAM_INLINE inline
 #define CAM_FORCE_INLINE inline
@@ -53,14 +53,14 @@
 #pragma clang diagnostic ignored "-Winvalid-noreturn"
 
 #ifdef CAM_DEBUG
-#define CAM_DEBUG_BREAK ??
+#define CAM_DEBUG_BREAK __builtin_debugtrap()
 #else
 #define CAM_DEBUG_BREAK
 #endif
 
 #elif defined(__GNUC__)
 
-#define CAM_DLL_EXPORT __declspec(dllexport)
+#define CAM_DLL_EXPORT __attribute__((visibility("default")))
 #define CAM_DLL_IMPORT /* NOTHING */
 #define CAM_INLINE inline
 #define CAM_FORCE_INLINE inline
@@ -76,7 +76,7 @@
 #define CAM_DEPRECATED __attribute__((deprecated))
 
 #ifdef CAM_DEBUG
-#define CAM_DEBUG_BREAK ??
+#define CAM_DEBUG_BREAK __builtin_trap()
 #else
 #define CAM_DEBUG_BREAK
 #endif

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Defines.h"
+#include <cstdint>
 #include <memory>
 
 using Byte = unsigned char;

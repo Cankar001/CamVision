@@ -35,6 +35,7 @@ project "UpdateClient"
 	links
 	{
 		"Cam-Core",
+		"Miniz",
 		"spdlog",
 	}
 
@@ -50,6 +51,8 @@ project "UpdateClient"
         {
             "pthread",
 			"anl",
+			"ssl",
+			"crypto",
         }
 
     filter "configurations:Debug"

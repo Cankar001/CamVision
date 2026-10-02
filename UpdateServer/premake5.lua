@@ -35,6 +35,7 @@ project "UpdateServer"
 	links
 	{
 		"Cam-Core",
+		"Miniz",
 		"spdlog",
 	}
 
@@ -43,11 +44,14 @@ project "UpdateServer"
 
     filter "system:linux"
         systemversion "latest"
+		defines "CAM_PLATFORM_LINUX"
 
         links
         {
             "pthread",
 			"anl",
+			"ssl",
+			"crypto",
         }
 
     filter "configurations:Debug"

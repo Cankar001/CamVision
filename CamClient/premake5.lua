@@ -25,7 +25,6 @@ project "CamClient"
 		"src",
 		"%{IncludeDir.cam_core}",
 		"%{IncludeDir.spdlog}",
-		"%{IncludeDir.opencv}",
     }
 
     links
@@ -35,6 +34,7 @@ project "CamClient"
     }
 
 	filter { "system:windows", "configurations:Debug" }
+		includedirs { "%{IncludeDir.opencv}" }
         systemversion "latest"
 		symbols "On"
 
@@ -66,30 +66,16 @@ project "CamClient"
 			"CAM_DEBUG"
 		}
 
-		libdirs { "%{LibDir.opencv_lib_path_linux}/Debug/" }
-		runpathdirs { "%{LibDir.opencv_lib_path_linux}/Debug/" }
+		-- OpenCV comes from the system (e.g. "sudo apt install libopencv-dev"), so it matches the CPU architecture (x86_64, ARM) of the machine.
+		buildoptions { "`pkg-config --cflags opencv4`" }
+		linkoptions { "`pkg-config --libs opencv4`" }
 
 		links
-		{	
+		{
 			"pthread",
 			"anl",
-			"%{LibDir.opencv_linux_core}",
-			"%{LibDir.opencv_linux_imgcodecs}",
-			"%{LibDir.opencv_linux_imgproc}",
-			"%{LibDir.opencv_linux_text}",
-			"%{LibDir.opencv_linux_tracking}",
-			"%{LibDir.opencv_linux_video}",
-			"%{LibDir.opencv_linux_videoio}",
-			"%{LibDir.opencv_linux_face}",
-			"%{LibDir.opencv_linux_stitching}",
-			"%{LibDir.opencv_linux_highgui}"
-		}
-
-		postbuildcommands
-		{
-			("{COPY} %{prj.location}/vendor/opencv/lib-linux/Debug/libopencv_core.so.405 %{cfg.targetdir}"),
-			("{COPY} %{prj.location}/vendor/opencv/lib-linux/Debug/libopencv_imgcodecs.so.405 %{cfg.targetdir}"),
-			("{COPY} %{prj.location}/vendor/opencv/lib-linux/Debug/libopencv_imgproc.so.405 %{cfg.targetdir}"),
+			"ssl",
+			"crypto"
 		}
 
 	filter { "system:macos", "configurations:Debug" }
@@ -108,6 +94,7 @@ project "CamClient"
 		}
 
 	filter { "system:windows", "configurations:Release" }
+		includedirs { "%{IncludeDir.opencv}" }
 		systemversion "latest"
         optimize "On"
 
@@ -139,30 +126,16 @@ project "CamClient"
 			"CAM_RELEASE"
 		}
 
-		libdirs { "%{LibDir.opencv_lib_path_linux}/Release/" }
-		runpathdirs { "%{LibDir.opencv_lib_path_linux}/Release/" }
+		-- OpenCV comes from the system (e.g. "sudo apt install libopencv-dev"), so it matches the CPU architecture (x86_64, ARM) of the machine.
+		buildoptions { "`pkg-config --cflags opencv4`" }
+		linkoptions { "`pkg-config --libs opencv4`" }
 
 		links
 		{
 			"pthread",
 			"anl",
-			"%{LibDir.opencv_linux_core}",
-			"%{LibDir.opencv_linux_imgcodecs}",
-			"%{LibDir.opencv_linux_imgproc}",
-			"%{LibDir.opencv_linux_text}",
-			"%{LibDir.opencv_linux_tracking}",
-			"%{LibDir.opencv_linux_video}",
-			"%{LibDir.opencv_linux_videoio}",
-			"%{LibDir.opencv_linux_face}",
-			"%{LibDir.opencv_linux_stitching}",
-			"%{LibDir.opencv_linux_highgui}"
-		}
-
-		postbuildcommands
-		{
-			("{COPY} %{prj.location}/vendor/opencv/lib-linux/Release/libopencv_core.so.405 %{cfg.targetdir}"),
-			("{COPY} %{prj.location}/vendor/opencv/lib-linux/Release/libopencv_imgcodecs.so.405 %{cfg.targetdir}"),
-			("{COPY} %{prj.location}/vendor/opencv/lib-linux/Release/libopencv_imgproc.so.405 %{cfg.targetdir}"),
+			"ssl",
+			"crypto"
 		}
 
 	filter { "system:macos", "configurations:Release" }
