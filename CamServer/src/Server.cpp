@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -873,6 +874,26 @@ void Server::StartFaceAnalysis()
 	}
 
 	m_FaceAnalyzer = std::move(analyzer);
+
+	if (m_Config.Email.Enabled)
+	{
+		auto mailer = std::make_unique<Mailer>(m_Config.Email);
+		if (mailer->Validate())
+		{
+			std::string recipients;
+			for (const std::string &recipient : m_Config.Email.To)
+			{
+				recipients += (recipients.empty() ? "" : ", ") + recipient;
+			}
+
+			m_Mailer = std::move(mailer);
+			CAM_LOG_INFO("Emails are turned on: an unknown person is reported to {0} (via {1}:{2}).", recipients, m_Config.Email.Server, m_Config.Email.Port);
+		}
+		else
+		{
+			CAM_LOG_ERROR("The emails are turned off, see the messages above.");
+		}
+	}
 	CAM_LOG_INFO("Face analysis started: {0} per second per camera, {1}.", m_Config.Faces.FPS,
 		m_FaceAnalyzer->CanRecognize() ? std::to_string(m_FaceAnalyzer->GetKnownPeopleCount()) + " known people" : std::string("detection only"));
 
@@ -1076,19 +1097,54 @@ void Server::FaceLoop()
 
 			if (unknown_person)
 			{
-				NotifyUnknownPerson(job.Title, unknown_face, snapshot_file);
+				// The picture with the marked face is attached to the email, even if no snapshots are stored.
+				std::vector<uchar> snapshot_jpeg;
+				if (m_Mailer && m_Config.Email.AttachSnapshot)
+				{
+					try
+					{
+						cv::Mat marked = frame.clone();
+						DrawFaces(marked, faces, recognition);
+						cv::imencode(".jpg", marked, snapshot_jpeg, { cv::IMWRITE_JPEG_QUALITY, 85 });
+					}
+					catch (const cv::Exception &e)
+					{
+						CAM_LOG_ERROR("Could not create the picture for the email: {}", e.what());
+					}
+				}
+
+				NotifyUnknownPerson(job.Title, unknown_face, snapshot_file, snapshot_jpeg);
 			}
 		}
 	}
 }
 
-void Server::NotifyUnknownPerson(const std::string &camera, const FaceResult &face, const std::string &snapshotFile)
+void Server::NotifyUnknownPerson(const std::string &camera, const FaceResult &face, const std::string &snapshotFile, const std::vector<uchar> &snapshotJpeg)
 {
-	// TODO: Send this as an email to the owner. For now, only the email, which would be sent, is written to the log.
-	//       Still to do for the real email: SMTP settings (server, port, user, password, sender, recipients) in server.cfg, sending without blocking the
-	//       face analysis, the snapshot as an attachment, and a limit for the number of emails, if somebody walks around in front of several cameras.
-	CAM_LOG_WARN("[TODO email] Would send an email to the owner. Subject: \"Unknown person at {0}\". Text: An unknown person was seen by the camera {0} at {1}. "
-		"Best similarity to a known person: {2:.2f} (needed {3:.2f}), detector score {4:.2f}. Snapshot: {5}",
-		camera, ReadableTimeString(), face.Similarity, m_Config.Faces.MatchThreshold, face.Score,
-		snapshotFile.empty() ? std::string("none (face_snapshots is off)") : snapshotFile);
+	char numbers[160];
+	snprintf(numbers, sizeof(numbers), "%.2f (needed %.2f), detector score %.2f", face.Similarity, m_Config.Faces.MatchThreshold, face.Score);
+
+	if (!m_Mailer)
+	{
+		// Emails are not turned on (or not possible), the event is only in the log.
+		CAM_LOG_WARN("Unknown person at {0} at {1}. Best similarity to a known person: {2}. (Emails are not turned on, see email in server.cfg.)", camera, ReadableTimeString(), numbers);
+		return;
+	}
+
+	EmailMessage message;
+	message.Subject = "Unknown person at " + camera;
+	message.Body = "An unknown person was seen by the camera \"" + camera + "\".\n\n"
+		"Time: " + ReadableTimeString() + "\n"
+		"Camera: " + camera + "\n"
+		"Best similarity to a known person: " + numbers + "\n"
+		"Picture: " + (!snapshotJpeg.empty() ? std::string("attached") : (snapshotFile.empty() ? std::string("none (email_attach_snapshot is off)") : "stored as " + snapshotFile)) + "\n\n"
+		"This message was sent automatically by CamVision.\n";
+	message.Attachment = snapshotJpeg;
+	message.AttachmentName = "unknown_person_" + SafeName(camera) + ".jpg";
+
+	// The email is sent in the background, a slow mail server must not slow down the face analysis.
+	if (m_Mailer->Enqueue(message))
+	{
+		CAM_LOG_INFO("Email about the unknown person at {} is being sent...", camera);
+	}
 }

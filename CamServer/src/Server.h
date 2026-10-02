@@ -13,6 +13,7 @@
 #include <opencv2/opencv.hpp>
 
 #include "FaceAnalyzer.h"
+#include "Mailer.h"
 
 struct ServerConfig
 {
@@ -40,6 +41,11 @@ struct ServerConfig
 	/// The settings of the face detection and recognition.
 	/// </summary>
 	FaceConfig Faces;
+
+	/// <summary>
+	/// The settings for the emails, which are sent when an unknown person is seen.
+	/// </summary>
+	EmailConfig Email;
 
 	/// <summary>
 	/// Seconds without any message after which a client is considered dead and removed (its frames are freed). 0 disables the timeout.
@@ -197,7 +203,8 @@ private:
 	/// <param name="camera">The name of the camera.</param>
 	/// <param name="face">The unknown face (position, detector score, best similarity).</param>
 	/// <param name="snapshotFile">The photo with the marked face, or empty if no snapshot was stored (face_snapshots is off).</param>
-	void NotifyUnknownPerson(const std::string &camera, const FaceResult &face, const std::string &snapshotFile);
+	/// <param name="snapshotJpeg">The photo with the marked face (JPEG), for the attachment of the email. Empty, if there is none.</param>
+	void NotifyUnknownPerson(const std::string &camera, const FaceResult &face, const std::string &snapshotFile, const std::vector<uchar> &snapshotJpeg);
 
 	/// <summary>
 	/// Removes all clients, which were not heard of for longer than the configured timeout.
@@ -223,6 +230,7 @@ private:
 	std::thread m_FramePreviewThread;
 	std::thread m_FaceThread;
 	std::unique_ptr<FaceAnalyzer> m_FaceAnalyzer;
+	std::unique_ptr<Mailer> m_Mailer;
 	std::thread m_ReaperThread;
 	std::thread m_ForwardThread;
 };

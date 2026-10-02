@@ -177,6 +177,19 @@ It uses the models YuNet (detection) and SFace (recognition) of OpenCV, no other
 
 The accuracy is good for frontal faces in decent light. It is a convenience feature, not a security system: do not use it to grant access to anything. Photos of people and the recognition results are personal data, handle them according to the laws, which apply to you (in the EU the GDPR).
 
+## Emails about unknown people
+
+When the face recognition sees a person, who matches nobody of the known people, the server can send an email with the picture, in which the face is marked. Together with the cooldown of the events (`face_event_cooldown`) and the limit `email_min_interval` (by default one email per minute), this does not flood the mailbox.
+
+1. **Prerequisites:** the face recognition must run (`faces = true`, both models, at least one known person), and **curl** must be installed. curl is part of Windows 10 and 11 already, on Linux install it with `sudo apt install curl`. The server uses curl to talk to the mail server (it takes care of the encryption and the login).
+2. **Settings:** copy the `email_*` settings of [CamServer/server.cfg.example](CamServer/server.cfg.example) into your `server.cfg` and fill in the mail server of your email provider: server, port, security (`starttls` for port 587, `ssl` for port 465), login, sender and recipients. Gmail, Outlook and others require an *app password* for programs like this, which you create in the security settings of your account.
+3. **Check it:** `CamServer --email_test` sends a test email with these settings and quits. If something is wrong, it says what (wrong password, server not reachable, certificate not trusted, ...).
+4. Set `email = true`.
+
+**The password:** a password in `server.cfg` can be read by everybody, who can read that file. The safer way is to leave `email_password` empty and set the environment variable `CAMVISION_EMAIL_PASSWORD` for the server instead (it overrides the setting). While an email is sent, the login data is written into a temporary file, which only the current user can read and which is deleted right afterwards (it is never passed on the command line, where other users could see it). The connection to the mail server is encrypted and the certificate is checked, unless you turn that off.
+
+The emails are sent in the background, a slow mail server does not slow down the face analysis. If sending fails, the reason is written to the log (the unknown person is logged in any case).
+
 # Configuration
 
 The camera client and the server are configured with a simple settings file and/or command line arguments. Command line arguments override the file, for example `./CamClient --camera_index=2 --max_fps=15`. Use `--config=path` to load a different file. Settings, which are not set, use their default values.

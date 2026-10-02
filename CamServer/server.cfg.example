@@ -46,6 +46,45 @@ face_event_cooldown = 30
 # The pictures keep their frame rate, the boxes are those of the latest analysis (up to 1 / face_fps seconds old). false sends the plain pictures.
 face_on_displays = true
 
+# ---- Emails about unknown people (off by default) -------------------------------------------------------------------------------------------
+# When the face recognition sees an unknown person, an email is sent (with the picture, in which the face is marked). It needs the face analysis
+# above (faces = true, with the recognizer model and at least one known person), and curl (included in Windows 10 and 11, on Linux: sudo apt install curl).
+# Check the settings with: CamServer --email_test   (sends a test email and quits).
+email = false
+
+# The mail server of your email provider (SMTP), and how to connect:
+#   starttls : port 587 (the usual choice)    ssl : port 465 (encrypted from the start)    none : port 25, no encryption (only for a server in your own network)
+email_smtp_server = smtp.example.com
+email_smtp_port = 587
+email_security = starttls
+
+# The login at the mail server (usually the email address). Many providers (Gmail, Outlook, ...) require an "app password" instead of your normal
+# password: create one in the security settings of your account. Leave both empty, if the server needs no login.
+# Safer than writing the password into this file: set it in the environment variable CAMVISION_EMAIL_PASSWORD, it overrides email_password.
+email_user = camvision@example.com
+email_password =
+
+# The sender, and the recipients (one address, or several separated by commas). Most providers require that the sender is your own address.
+email_from = camvision@example.com
+email_to = owner@example.com
+
+# Written in front of the subject of every email.
+email_subject_prefix = [CamVision]
+
+# Attaches the picture with the marked face to the email.
+email_attach_snapshot = true
+
+# At most one email per this many seconds (so that somebody walking in front of several cameras does not send a flood of emails). Emails that are
+# requested earlier are not sent, it is written to the log.
+email_min_interval = 60
+
+# Checks the certificate of the mail server. Only set this to false for a server in your own network with a self signed certificate.
+email_verify_certificate = true
+
+# The curl program (a different path, if it is not found), and how long sending an email may take, in seconds.
+email_curl_path = curl
+email_timeout = 60
+
 # Stores a photo with the marked faces, whenever somebody is reported. One folder per camera inside face_snapshot_path.
 face_snapshots = false
 face_snapshot_path = faces

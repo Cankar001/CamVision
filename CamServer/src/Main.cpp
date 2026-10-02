@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <iostream>
 
 #include "Server.h"
@@ -62,6 +63,97 @@ int main(int argc, char *argv[])
 	faces.Snapshots = settings.GetBool("face_snapshots", faces.Snapshots);
 	faces.SnapshotPath = settings.GetString("face_snapshot_path", faces.SnapshotPath);
 	faces.EventCooldownSeconds = (uint32)std::max(settings.GetInt("face_event_cooldown", faces.EventCooldownSeconds), 0);
+
+	EmailConfig &email = config.Email;
+	email.Enabled = settings.GetBool("email", email.Enabled);
+	email.Server = settings.GetString("email_smtp_server", email.Server);
+	email.Port = (uint16)settings.GetInt("email_smtp_port", email.Port);
+	email.Security = settings.GetString("email_security", email.Security);
+	email.User = settings.GetString("email_user", email.User);
+	email.Password = settings.GetString("email_password", email.Password);
+	email.From = settings.GetString("email_from", email.From);
+	email.SubjectPrefix = settings.GetString("email_subject_prefix", email.SubjectPrefix);
+	email.AttachSnapshot = settings.GetBool("email_attach_snapshot", email.AttachSnapshot);
+	email.MinIntervalSeconds = (uint32)std::max(settings.GetInt("email_min_interval", email.MinIntervalSeconds), 0);
+	email.VerifyCertificate = settings.GetBool("email_verify_certificate", email.VerifyCertificate);
+	email.CurlPath = settings.GetString("email_curl_path", email.CurlPath);
+	email.TimeoutSeconds = (uint32)std::max(settings.GetInt("email_timeout", email.TimeoutSeconds), 5);
+
+	// The recipients: one or more addresses, separated by commas or semicolons.
+	std::string recipients = settings.GetString("email_to", "");
+	{
+		std::string current;
+		for (size_t i = 0; i <= recipients.size(); ++i)
+		{
+			if (i == recipients.size() || recipients[i] == ',' || recipients[i] == ';')
+			{
+				size_t begin = current.find_first_not_of(" ");
+				size_t end = current.find_last_not_of(" ");
+				if (begin != std::string::npos)
+				{
+					email.To.push_back(current.substr(begin, end - begin + 1));
+				}
+
+				current.clear();
+			}
+			else
+			{
+				current += recipients[i];
+			}
+		}
+	}
+
+	// A password in a file is readable by everybody, who can read the file. The environment variable is the safer place.
+#ifdef _WIN32
+	char *environment_password = nullptr;
+	size_t environment_password_length = 0;
+	if (_dupenv_s(&environment_password, &environment_password_length, "CAMVISION_EMAIL_PASSWORD") == 0 && environment_password)
+	{
+		if (environment_password[0] != 0)
+		{
+			email.Password = environment_password;
+		}
+
+		free(environment_password);
+	}
+#else
+	if (const char *environment_password = std::getenv("CAMVISION_EMAIL_PASSWORD"))
+	{
+		if (environment_password[0] != 0)
+		{
+			email.Password = environment_password;
+		}
+	}
+#endif
+
+	// --email_test: sends a test email with the settings above and quits, to check them.
+	if (settings.GetBool("email_test", false))
+	{
+		Mailer mailer(email);
+		if (!mailer.Validate())
+		{
+			Core::Shutdown();
+			return 1;
+		}
+
+		EmailMessage message;
+		message.Subject = "Test email";
+		message.Body = "This is a test email from CamVision.\n\nIf you read this, the email settings in server.cfg are correct.\n";
+		std::string error;
+		std::cout << "Sending a test email to " << recipients << " via " << email.Server << ":" << email.Port << " ..." << std::endl;
+		bool sent = mailer.SendNow(message, &error);
+		if (sent)
+		{
+			std::cout << "The test email was sent." << std::endl;
+		}
+		else
+		{
+			std::cerr << "The test email could not be sent: " << error << std::endl;
+		}
+
+		Core::Shutdown();
+		return sent ? 0 : 1;
+	}
 
 	// --face_test=photo.jpg: analyzes one photo, prints the result and quits. To check the models and the known faces without a camera.
 	std::string face_test = settings.GetString("face_test", "");
