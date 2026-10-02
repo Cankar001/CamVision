@@ -27,3 +27,9 @@ private_key.key
 public_key.key
 signature.sig
 new_update/
+
+# Face models and personal data of the face recognition
+CamServer/models/*.onnx
+CamServer/known_faces/*
+!CamServer/known_faces/README.md
+CamServer/faces/

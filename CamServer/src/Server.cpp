@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
 #include <iostream>
 #include <unordered_set>
 
@@ -38,6 +40,11 @@ Server::~Server()
 	if (m_FramePreviewThread.joinable())
 	{
 		m_FramePreviewThread.join();
+	}
+
+	if (m_FaceThread.joinable())
+	{
+		m_FaceThread.join();
 	}
 
 	if (m_ReaperThread.joinable())
@@ -435,6 +442,7 @@ void Server::FramePreview()
 	{
 		std::string Name;
 		EncodedFrame Frame;
+		std::vector<FaceResult> Faces;
 	};
 
 	std::unordered_map<uint64, uint32> shown_frames;
@@ -483,7 +491,7 @@ void Server::FramePreview()
 					if (client->LatestFrame && client->LatestFrameNumber != shown)
 					{
 						shown = client->LatestFrameNumber;
-						previews.push_back({ client->FrameTitle, client->LatestFrame });
+						previews.push_back({ client->FrameTitle, client->LatestFrame, client->Faces });
 					}
 				}
 			}
@@ -515,6 +523,12 @@ void Server::FramePreview()
 				{
 					CAM_LOG_ERROR("Could not decode frame of {}!", preview.Name);
 					continue;
+				}
+
+				if (!preview.Faces.empty())
+				{
+					// The faces come from the face analysis, which runs a few times per second, so they can be a little behind the frame.
+					DrawFaces(frame, preview.Faces, m_FaceAnalyzer && m_FaceAnalyzer->CanRecognize());
 				}
 
 				if (created_windows.insert(preview.Name).second)
@@ -563,6 +577,197 @@ void Server::FramePreview()
 		{
 			CAM_LOG_ERROR("Preview error: {}", e.what());
 			Core::SleepMS(100);
+		}
+	}
+}
+
+void Server::StartFaceAnalysis()
+{
+	if (!m_Config.Faces.Enabled)
+	{
+		return;
+	}
+
+	auto analyzer = std::make_unique<FaceAnalyzer>(m_Config.Faces);
+	if (!analyzer->Initialize())
+	{
+		CAM_LOG_ERROR("The face analysis is turned off.");
+		return;
+	}
+
+	m_FaceAnalyzer = std::move(analyzer);
+	CAM_LOG_INFO("Face analysis started: {0} per second per camera, {1}.", m_Config.Faces.FPS,
+		m_FaceAnalyzer->CanRecognize() ? std::to_string(m_FaceAnalyzer->GetKnownPeopleCount()) + " known people" : std::string("detection only"));
+
+	m_FaceThread = std::thread(&Server::FaceLoop, std::ref(*this));
+}
+
+// A name, which can be used as a folder or file name.
+static std::string SafeName(const std::string &name)
+{
+	std::string result = name;
+	for (char &c : result)
+	{
+		if (!isalnum((unsigned char)c) && c != '-' && c != '_')
+		{
+			c = '_';
+		}
+	}
+
+	return result.empty() ? "unnamed" : result;
+}
+
+static std::string TimestampString()
+{
+	std::time_t now = std::time(nullptr);
+	std::tm local = {};
+#ifdef _WIN32
+	localtime_s(&local, &now);
+#else
+	localtime_r(&now, &local);
+#endif
+
+	char buffer[32];
+	strftime(buffer, sizeof(buffer), "%Y%m%d_%H%M%S", &local);
+	return buffer;
+}
+
+void Server::FaceLoop()
+{
+	struct Job
+	{
+		uint64 Address;
+		std::string Title;
+		EncodedFrame Frame;
+		uint32 Number;
+	};
+
+	const FaceConfig &config = m_Config.Faces;
+	const int64 interval_ms = 1000 / std::max<uint32>(config.FPS, 1);
+	const int64 cooldown_ms = (int64)config.EventCooldownSeconds * 1000;
+
+	// per camera
+	std::unordered_map<uint64, int64> last_analysis_ms;
+	std::unordered_map<uint64, uint32> last_number;
+	std::unordered_map<uint64, std::unordered_map<std::string, int64>> last_event_ms;
+
+	while (m_Running)
+	{
+		m_FaceAnalyzer->ReloadKnownFacesIfChanged();
+
+		// Only hold the lock while collecting the (shared) frame pointers, the analysis takes long.
+		std::vector<Job> jobs;
+		int64 now = Core::QueryMS();
+		{
+			std::lock_guard<std::mutex> lock(m_ClientsMutex);
+			for (auto &client : m_Clients)
+			{
+				uint64 address = client->Address.Value;
+				if (client->LatestFrame && client->LatestFrameNumber != last_number[address] && now - last_analysis_ms[address] >= interval_ms)
+				{
+					jobs.push_back({ address, client->FrameTitle, client->LatestFrame, client->LatestFrameNumber });
+				}
+			}
+		}
+
+		if (jobs.empty())
+		{
+			Core::SleepMS(20);
+			continue;
+		}
+
+		for (Job &job : jobs)
+		{
+			cv::Mat frame = cv::imdecode(*job.Frame, cv::IMREAD_COLOR);
+			last_number[job.Address] = job.Number;
+			if (frame.empty())
+			{
+				continue;
+			}
+
+			std::vector<FaceResult> faces;
+			try
+			{
+				faces = m_FaceAnalyzer->Analyze(frame);
+			}
+			catch (const cv::Exception &e)
+			{
+				CAM_LOG_ERROR("Face analysis failed for {0}: {1}", job.Title, e.what());
+			}
+
+			last_analysis_ms[job.Address] = Core::QueryMS();
+
+			{
+				std::lock_guard<std::mutex> lock(m_ClientsMutex);
+				for (auto &client : m_Clients)
+				{
+					if (client->Address.Value == job.Address)
+					{
+						client->Faces = faces;
+						break;
+					}
+				}
+			}
+
+			// Report everybody, who was not reported lately.
+			bool recognition = m_FaceAnalyzer->CanRecognize();
+			bool snapshot_needed = false;
+			std::string snapshot_identity;
+			for (const FaceResult &face : faces)
+			{
+				std::string identity = face.Recognized ? face.Name : (recognition ? "unknown" : "face");
+				int64 &last = last_event_ms[job.Address][identity];
+				int64 event_time = Core::QueryMS();
+				if (last != 0 && event_time - last < cooldown_ms)
+				{
+					continue;
+				}
+
+				last = event_time;
+				if (face.Recognized)
+				{
+					CAM_LOG_INFO("{0}: {1} recognized (similarity {2:.2f})", job.Title, face.Name, face.Similarity);
+				}
+				else if (recognition)
+				{
+					CAM_LOG_INFO("{0}: unknown person (best similarity {1:.2f})", job.Title, face.Similarity);
+				}
+				else
+				{
+					CAM_LOG_INFO("{0}: face detected (score {1:.2f})", job.Title, face.Score);
+				}
+
+				if (!snapshot_needed)
+				{
+					snapshot_needed = true;
+					snapshot_identity = identity;
+				}
+			}
+
+			if (snapshot_needed && config.Snapshots)
+			{
+				try
+				{
+					std::filesystem::path folder = std::filesystem::path(config.SnapshotPath) / SafeName(job.Title);
+					std::filesystem::create_directories(folder);
+
+					cv::Mat marked = frame.clone();
+					DrawFaces(marked, faces, recognition);
+					std::string file = (folder / (TimestampString() + "_" + SafeName(snapshot_identity) + ".jpg")).string();
+					if (cv::imwrite(file, marked))
+					{
+						CAM_LOG_INFO("Snapshot stored: {}", file);
+					}
+					else
+					{
+						CAM_LOG_ERROR("Could not store the snapshot {}", file);
+					}
+				}
+				catch (const std::exception &e)
+				{
+					CAM_LOG_ERROR("Could not store the snapshot: {}", e.what());
+				}
+			}
 		}
 	}
 }

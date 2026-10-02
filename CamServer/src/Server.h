@@ -11,6 +11,8 @@
 
 #include <opencv2/opencv.hpp>
 
+#include "FaceAnalyzer.h"
+
 struct ServerConfig
 {
 	/// <summary>
@@ -32,6 +34,11 @@ struct ServerConfig
 	/// Determines, if the live preview windows of all connected cameras are shown.
 	/// </summary>
 	bool ShowPreview = true;
+
+	/// <summary>
+	/// The settings of the face detection and recognition.
+	/// </summary>
+	FaceConfig Faces;
 
 	/// <summary>
 	/// Seconds without any message after which a client is considered dead and removed (its frames are freed). 0 disables the timeout.
@@ -75,6 +82,11 @@ struct ClientEntry
 	/// </summary>
 	EncodedFrame LatestFrame;
 	uint32 LatestFrameNumber = 0;
+
+	/// <summary>
+	/// The faces, which were found in the latest analyzed frame (used by the preview).
+	/// </summary>
+	std::vector<FaceResult> Faces;
 	uint32 DroppedFrames = 0;
 
 	/// <summary>
@@ -103,6 +115,11 @@ public:
 	void Run();
 	void StartFramePreviews();
 
+	/// <summary>
+	/// Starts the face detection (and recognition) of all camera feeds. Does nothing, if it is turned off or not possible (the reason is logged).
+	/// </summary>
+	void StartFaceAnalysis();
+
 private:
 
 	bool Step();
@@ -118,6 +135,11 @@ private:
 	ClientEntry *FindClient(const Core::addr_t &clientAddr);
 
 	void FramePreview();
+
+	/// <summary>
+	/// Analyzes the latest frames of all cameras on a thread of its own, and reports the people who are seen.
+	/// </summary>
+	void FaceLoop();
 
 	/// <summary>
 	/// Removes all clients, which were not heard of for longer than the configured timeout.
@@ -137,6 +159,8 @@ private:
 	std::mutex m_ClientsMutex;
 	std::vector<std::unique_ptr<ClientEntry>> m_Clients;
 	std::thread m_FramePreviewThread;
+	std::thread m_FaceThread;
+	std::unique_ptr<FaceAnalyzer> m_FaceAnalyzer;
 	std::thread m_ReaperThread;
 };
 

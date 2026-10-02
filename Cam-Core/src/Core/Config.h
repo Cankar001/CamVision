@@ -87,6 +87,25 @@ namespace Core
 			return (int32)value;
 		}
 
+		float GetFloat(const std::string &key, float fallback) const
+		{
+			auto it = m_Values.find(Normalize(key));
+			if (it == m_Values.end())
+			{
+				return fallback;
+			}
+
+			char *end = nullptr;
+			double value = strtod(it->second.c_str(), &end);
+			if (it->second.empty() || *end != 0)
+			{
+				CAM_LOG_ERROR("Setting '{0}' has an invalid number '{1}', using {2}.", key, it->second, fallback);
+				return fallback;
+			}
+
+			return (float)value;
+		}
+
 		bool GetBool(const std::string &key, bool fallback) const
 		{
 			auto it = m_Values.find(Normalize(key));

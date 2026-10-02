@@ -137,6 +137,20 @@ journalctl -u camvision-client -f      # shows the log
 | `Could not connect to server` | Check `server_ip` and `server_port`, the server must be running, and UDP on the server port must be allowed by the firewall of the server. |
 | `Gtk-WARNING: cannot open display` | There is no desktop session. Set `headless = true` (client) or `preview = false` (server). |
 
+# Face detection and recognition
+
+The server can find faces in the camera feeds and recognize known people. It is off by default, and runs on the **server** (it analyzes the latest frame of every camera a few times per second, so the cameras stay lightweight). Faces are marked in the preview windows (green: known person, red: unknown person), and the log reports who is seen (once per person and camera every 30 seconds, optionally with a photo).
+
+It uses the models YuNet (detection) and SFace (recognition) of OpenCV, no other library is needed. This needs **OpenCV 4.5.4 or newer** (the Windows build uses 4.14, on Linux check `pkg-config --modversion opencv4`). The processing runs on the CPU: use a **Release build** of the server, the Debug build is many times slower.
+
+1. **Download the two model files** into `CamServer/models/` (links and sizes are in [CamServer/models/README.md](CamServer/models/README.md), about 37 MB together). The face detection works with the first file alone, the recognition needs both.
+2. **Add the photos of the known people** into `CamServer/known_faces/`, one folder per person (see [CamServer/known_faces/README.md](CamServer/known_faces/README.md)). Photos can be added while the server is running.
+3. **Turn it on:** `faces = true` in `server.cfg` (or `--faces=true`). The other settings are explained in [CamServer/server.cfg.example](CamServer/server.cfg.example).
+
+**Check the setup without a camera:** `CamServer --face_test=photo.jpg` analyzes one photo, prints the faces it finds (and who they are), and stores `photo.jpg.faces.jpg` with the faces marked. Run it from the folder of the executable like the server. A face, which is not recognized, shows the best similarity and the needed value, so `face_match_threshold` can be tuned.
+
+The accuracy is good for frontal faces in decent light. It is a convenience feature, not a security system: do not use it to grant access to anything. Photos of people and the recognition results are personal data, handle them according to the laws, which apply to you (in the EU the GDPR).
+
 # Configuration
 
 The camera client and the server are configured with a simple settings file and/or command line arguments. Command line arguments override the file, for example `./CamClient --camera_index=2 --max_fps=15`. Use `--config=path` to load a different file. Settings, which are not set, use their default values.

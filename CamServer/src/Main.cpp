@@ -49,6 +49,28 @@ int main(int argc, char *argv[])
 	config.ShowPreview = settings.GetBool("preview", config.ShowPreview);
 	config.ClientTimeoutSeconds = (uint32)std::max(settings.GetInt("client_timeout_seconds", config.ClientTimeoutSeconds), 0);
 
+	FaceConfig &faces = config.Faces;
+	faces.Enabled = settings.GetBool("faces", faces.Enabled);
+	faces.DetectorModel = settings.GetString("face_detector_model", faces.DetectorModel);
+	faces.RecognizerModel = settings.GetString("face_recognizer_model", faces.RecognizerModel);
+	faces.KnownFacesPath = settings.GetString("known_faces_path", faces.KnownFacesPath);
+	faces.ScoreThreshold = settings.GetFloat("face_score_threshold", faces.ScoreThreshold);
+	faces.MatchThreshold = settings.GetFloat("face_match_threshold", faces.MatchThreshold);
+	faces.DetectWidth = std::max(settings.GetInt("face_detect_width", faces.DetectWidth), 0);
+	faces.FPS = (uint32)std::max(settings.GetInt("face_fps", faces.FPS), 1);
+	faces.Snapshots = settings.GetBool("face_snapshots", faces.Snapshots);
+	faces.SnapshotPath = settings.GetString("face_snapshot_path", faces.SnapshotPath);
+	faces.EventCooldownSeconds = (uint32)std::max(settings.GetInt("face_event_cooldown", faces.EventCooldownSeconds), 0);
+
+	// --face_test=photo.jpg: analyzes one photo, prints the result and quits. To check the models and the known faces without a camera.
+	std::string face_test = settings.GetString("face_test", "");
+	if (!face_test.empty())
+	{
+		int exit_code = RunFaceTest(faces, face_test);
+		Core::Shutdown();
+		return exit_code;
+	}
+
 	if (!settings.LoadedFile().empty())
 	{
 		CAM_LOG_INFO("Loaded settings from {}", settings.LoadedFile());
@@ -63,6 +85,7 @@ int main(int argc, char *argv[])
 	{
 		s.StartFramePreviews();
 	}
+	s.StartFaceAnalysis();
 	s.Run();
 
 	Core::Shutdown();

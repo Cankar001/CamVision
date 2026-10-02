@@ -13,3 +13,35 @@ client_timeout_seconds = 15
 
 # Shows a live preview window for every connected camera.
 preview = true
+
+# ---- Face detection and recognition (off by default) ----------------------------------------------------------------------------------------
+# Finds the faces in the camera feeds, and recognizes known people. It needs two model files and photos of the known people, see README.md
+# ("Face detection and recognition"). Faces are marked in the preview windows, and reported in the log.
+faces = false
+
+# The model files (see CamServer/models/README.md). Without the recognizer model, faces are only detected.
+face_detector_model = models/face_detection_yunet_2023mar.onnx
+face_recognizer_model = models/face_recognition_sface_2021dec.onnx
+
+# Folder with the photos of the known people: one folder per person (see CamServer/known_faces/README.md).
+known_faces_path = known_faces
+
+# How often the frames of every camera are analyzed per second. Higher values need more CPU.
+face_fps = 3
+
+# Minimum confidence of the detector (0 - 1). Lower values find more faces, but also more false ones.
+face_score_threshold = 0.7
+
+# Minimum similarity (-1 - 1) for a match with a known person. 0.363 is the value recommended by the authors of the model. Higher values are stricter:
+# fewer wrong people, but more known people are reported as "unknown".
+face_match_threshold = 0.363
+
+# Frames are scaled down to this width for the detection (much faster). 0 = no scaling. Small faces far away are only found with larger values.
+face_detect_width = 640
+
+# A person, who stays in front of a camera, is reported once per this many seconds.
+face_event_cooldown = 30
+
+# Stores a photo with the marked faces, whenever somebody is reported. One folder per camera inside face_snapshot_path.
+face_snapshots = false
+face_snapshot_path = faces
