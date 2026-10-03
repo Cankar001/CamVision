@@ -33,6 +33,11 @@ struct ClientConfig
 	std::string PublicKeyPath;
 
 	/// <summary>
+	/// How many seconds a running CamClient has to quit on its own, before an update is installed. After that time, it is killed.
+	/// </summary>
+	uint32 StopTimeoutSeconds = 15;
+
+	/// <summary>
 	/// The update server ip
 	/// </summary>
 	std::string ServerIP;
@@ -120,6 +125,18 @@ private:
 	/// Extracts update.zip into the install path and remembers the new version.
 	/// </summary>
 	bool InstallUpdate();
+
+	/// <summary>
+	/// Finds the running CamClients (the ones in the install path and in the fallback path).
+	/// </summary>
+	std::vector<uint32> FindRunningCamClients();
+
+	/// <summary>
+	/// Stops all running CamClients: they are asked to quit (so they say goodbye to the server), and killed if they do not quit in time. The files of a
+	/// running program are locked on Windows, so this has to happen before the update is installed.
+	/// </summary>
+	/// <returns>Returns true, if no CamClient is running anymore.</returns>
+	bool StopCamClient();
 
 	/// <summary>
 	/// Starts the CamClient from the install path (the last installed update), or from the fallback path, if no update was installed yet.

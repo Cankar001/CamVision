@@ -21,3 +21,7 @@ fallback_path = ../CamClient/bin/Debug-windows-x86_64/CamClient
 # If it does not exist, the key sent by the server is trusted once, with the first update, and stored here. Delete the file to trust a new server key.
 # For devices in the field, copy the public key file of the server here before the first start, so the first update does not have to be trusted blindly.
 public_key_path = ../CamClient/public_key.key
+
+# Before an update is installed, a running CamClient is stopped (its files are locked on Windows, and the update client starts the new one afterwards).
+# It is asked to quit first, so it can say goodbye to the server. If it is still running after this many seconds, it is killed.
+camclient_stop_timeout = 15

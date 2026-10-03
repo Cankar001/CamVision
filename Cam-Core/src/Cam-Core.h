@@ -7,6 +7,7 @@
 #include "Core/ThreadSafeQueue.h"
 #include "Core/FileSystem.h"
 #include "Core/FileSystemWatcher.h"
+#include "Core/Process.h"
 #include "Core/Crypto.h"
 #include "Core/Timer.h"
 #include "Core/Hash.h"

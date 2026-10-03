@@ -176,6 +176,14 @@ void Client::Run()
 
 		if (m_Status.Code == ClientStatusCode::DOWNLOADED)
 		{
+			// The running CamClient has to be gone, its files are locked (Windows) and it would run next to the one, which is started after the update.
+			if (!StopCamClient())
+			{
+				CAM_LOG_ERROR("The running CamClient could not be stopped. The update is not installed.");
+				m_Status.Code = ClientStatusCode::BAD_WRITE;
+				continue;
+			}
+
 			if (InstallUpdate())
 			{
 				CAM_LOG_INFO("Update to version {} installed successfully.", m_LocalVersion);
@@ -225,8 +233,76 @@ void Client::Run()
 	}
 }
 
+static std::string CamClientFile(const std::string &folder)
+{
+#if CAM_PLATFORM_WINDOWS
+	return folder + "/CamClient.exe";
+#else
+	return folder + "/CamClient";
+#endif
+}
+
+std::vector<uint32> Client::FindRunningCamClients()
+{
+	std::vector<uint32> result;
+	for (const std::string &folder : { m_Config.UpdateBinaryPath, m_Config.FallbackPath })
+	{
+		if (folder.empty())
+		{
+			continue;
+		}
+
+		for (uint32 pid : Core::Process::FindByExecutable(CamClientFile(folder)))
+		{
+			if (std::find(result.begin(), result.end(), pid) == result.end())
+			{
+				result.push_back(pid);
+			}
+		}
+	}
+
+	return result;
+}
+
+bool Client::StopCamClient()
+{
+	std::vector<uint32> running = FindRunningCamClients();
+	if (running.empty())
+	{
+		return true;
+	}
+
+	bool all_gone = true;
+	for (uint32 pid : running)
+	{
+		CAM_LOG_INFO("Stopping the running CamClient (process {})...", pid);
+		if (Core::Process::Stop(pid, m_Config.StopTimeoutSeconds))
+		{
+			CAM_LOG_INFO("The CamClient (process {}) was stopped.", pid);
+		}
+		else
+		{
+			CAM_LOG_ERROR("The CamClient (process {}) could not be stopped!", pid);
+			all_gone = false;
+		}
+	}
+
+	// The files of a program are released a moment after it ended.
+	Core::SleepMS(500);
+	return all_gone;
+}
+
 bool Client::StartCamClient()
 {
+	// A CamClient, which is running already (the update client is started, while the camera is working and no update is needed), must not get a twin: two
+	// of them would send the same camera twice and fight for it.
+	std::vector<uint32> running = FindRunningCamClients();
+	if (!running.empty())
+	{
+		CAM_LOG_INFO("A CamClient is running already (process {}), not starting another one.", running.front());
+		return true;
+	}
+
 	// Construct the path to the target executable
 #if CAM_PLATFORM_WINDOWS
 	const char *executable = "/CamClient.exe";
