@@ -12,14 +12,6 @@
 
 namespace Core
 {
-	// get sockaddr, IPv4 or IPv6:
-	static void *GetInAddr(struct sockaddr *sa)
-	{
-    	if (sa->sa_family == AF_INET)
-        	return &(((struct sockaddr_in*)sa)->sin_addr);
-    	return &(((struct sockaddr_in6*)sa)->sin6_addr);
-	}
-
 	LinuxSocket::LinuxSocket()
 	{
 		m_Socket = -1;
@@ -82,19 +74,18 @@ namespace Core
 	int32 LinuxSocket::Recv(void *dst, int32 dst_bytes, addr_t *addr)
 	{
 		int32 handle = m_Socket;
-		struct sockaddr dest_addr = {};
+		struct sockaddr_in dest_addr = {};
 		socklen_t addrLen = sizeof(dest_addr);
 
-		int32 bytes_received = recvfrom(handle, dst, dst_bytes, 0, &dest_addr, &addrLen);
+		int32 bytes_received = recvfrom(handle, dst, dst_bytes, 0, (struct sockaddr *)&dest_addr, &addrLen);
 		if (bytes_received < 0)
 		{
 			// Nothing to read on a non-blocking socket is not an error.
 			return (errno == EAGAIN || errno == EWOULDBLOCK) ? 0 : -1;
 		}
-		struct sockaddr_in *dest_conn_info = (struct sockaddr_in*)GetInAddr(&dest_addr);
 
-		addr->Host = dest_conn_info->sin_addr.s_addr;
-		addr->Port = dest_conn_info->sin_port;
+		addr->Host = dest_addr.sin_addr.s_addr;
+		addr->Port = dest_addr.sin_port;
 		return bytes_received;
 	}
 	

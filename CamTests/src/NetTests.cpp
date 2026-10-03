@@ -45,6 +45,10 @@ TEST(Socket, SendsAndReceivesOnLoopback)
 	REQUIRE_EQ(length, (int32)sizeof(message));
 	CHECK(strcmp(buffer, message) == 0);
 
+	// The address of the sender is the loopback address (a program answers to this address, so it has to be right).
+	CHECK_EQ(from.Host, target.Host);
+	CHECK(from.Port != 0);
+
 	// The server can answer to the sender.
 	const char answer[] = "hello client";
 	CHECK_EQ(server->Send(answer, (int32)sizeof(answer), from), (int32)sizeof(answer));
