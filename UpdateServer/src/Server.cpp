@@ -599,6 +599,104 @@ void Server::WatchLoop()
 	}
 }
 
+namespace
+{
+	// "192.168.1.20:51234" (the address is stored in network order, the bytes are read one by one, so it works on every machine).
+	std::string FormatAddress(Core::addr_t addr)
+	{
+		const Byte *host = (const Byte *)&addr.Host;
+		const Byte *port = (const Byte *)&addr.Port;
+		return std::to_string(host[0]) + "." + std::to_string(host[1]) + "." + std::to_string(host[2]) + "." + std::to_string(host[3]) + ":" + std::to_string((port[0] << 8) | port[1]);
+	}
+
+	double Megabytes(uint32 bytes)
+	{
+		return bytes / 1048576.0;
+	}
+}
+
+void Server::BeginTransfer(Core::addr_t addr, uint64 clientToken, int64 now_ms)
+{
+	// The client asks for the begin of the update again, if our answer got lost: not a new transfer.
+	auto existing = m_Transfers.find(addr.Value);
+	if (existing != m_Transfers.end() && existing->second.ClientToken == clientToken)
+	{
+		existing->second.LastActivityMS = now_ms;
+		return;
+	}
+
+	Transfer transfer;
+	transfer.ClientToken = clientToken;
+	transfer.Version = m_LocalVersion;
+	transfer.TotalBytes = m_UpdateFile.Size;
+	transfer.Served.assign((m_UpdateFile.Size + PIECE_BYTES - 1) / PIECE_BYTES, false);
+	transfer.StartMS = now_ms;
+	transfer.LastLogMS = now_ms;
+	transfer.LastActivityMS = now_ms;
+	m_Transfers[addr.Value] = std::move(transfer);
+
+	CAM_LOG_INFO("Sending update version {0} ({1:.1f} MB) to {2}...", m_LocalVersion, Megabytes(m_UpdateFile.Size), FormatAddress(addr));
+}
+
+void Server::PieceSent(Core::addr_t addr, uint64 clientToken, uint32 piecePos, uint32 pieceSize, int64 now_ms)
+{
+	auto found = m_Transfers.find(addr.Value);
+	if (found == m_Transfers.end() || found->second.ClientToken != clientToken)
+	{
+		// The begin was not seen: start the log now.
+		BeginTransfer(addr, clientToken, now_ms);
+		found = m_Transfers.find(addr.Value);
+	}
+
+	Transfer &transfer = found->second;
+	transfer.LastActivityMS = now_ms;
+
+	uint32 index = piecePos / PIECE_BYTES;
+	if (index < transfer.Served.size() && !transfer.Served[index])
+	{
+		transfer.Served[index] = true;
+		++transfer.ServedPieces;
+		transfer.ServedBytes += pieceSize;
+	}
+
+	if (transfer.ServedPieces == transfer.Served.size())
+	{
+		CAM_LOG_INFO("Update version {0} sent completely to {1}: {2:.1f} MB in {3:.1f} s.", transfer.Version, FormatAddress(addr), Megabytes(transfer.TotalBytes), (now_ms - transfer.StartMS) / 1000.0);
+		m_Transfers.erase(found);
+		return;
+	}
+
+	if (now_ms - transfer.LastLogMS >= 1000)
+	{
+		transfer.LastLogMS = now_ms;
+		CAM_LOG_INFO("Sending update to {0}: {1:.1f} / {2:.1f} MB ({3}%)", FormatAddress(addr), Megabytes(transfer.ServedBytes), Megabytes(transfer.TotalBytes), (uint64)transfer.ServedBytes * 100 / transfer.TotalBytes);
+	}
+}
+
+void Server::ExpireTransfers(int64 now_ms)
+{
+	if (now_ms - m_LastTransferSweepMS < 5000)
+	{
+		return;
+	}
+
+	m_LastTransferSweepMS = now_ms;
+	for (auto it = m_Transfers.begin(); it != m_Transfers.end();)
+	{
+		const Transfer &transfer = it->second;
+		if (now_ms - transfer.LastActivityMS < 15000)
+		{
+			++it;
+			continue;
+		}
+
+		Core::addr_t addr = {};
+		addr.Value = it->first;
+		CAM_LOG_WARN("The client {0} stopped downloading the update at {1:.1f} / {2:.1f} MB ({3}%).", FormatAddress(addr), Megabytes(transfer.ServedBytes), Megabytes(transfer.TotalBytes), (uint64)transfer.ServedBytes * 100 / transfer.TotalBytes);
+		it = m_Transfers.erase(it);
+	}
+}
+
 bool Server::Step()
 {
 	static Byte BUF[65536];
@@ -627,9 +725,9 @@ bool Server::Step()
 		}
 
 		ClientUpdateBeginMessage *msg = (ClientUpdateBeginMessage *)BUF;
-		CAM_LOG_DEBUG("Received Update begin request with client token: {}", msg->ClientToken);
 
 		int64 now_ms = Core::QueryMS();
+		ExpireTransfers(now_ms);
 		Core::Clients::Node *client = m_Clients->Insert(addr, now_ms);
 
 		if (!client)
@@ -646,7 +744,7 @@ bool Server::Step()
 
 		if (msg->ServerToken != client->ServerToken)
 		{
-			CAM_LOG_WARN("Server tokens did not match! Sending Server update token message...");
+			// The normal start of every download: the client does not know its token yet (nothing is logged, it happens for every download).
 			ServerUpdateTokenMessage res = {};
 			res.Header.Type = MessageType::SERVER_UPDATE_TOKEN;
 			res.Header.Version = m_LocalVersion;
@@ -659,7 +757,6 @@ bool Server::Step()
 			return true;
 		}
 
-		CAM_LOG_DEBUG("Sending update begin response...");
 		ServerUpdateBeginMessage res;
 		memset(&res, 0, sizeof(res));
 
@@ -673,6 +770,7 @@ bool Server::Step()
 
 		// From now on, the client downloads this update.
 		client->UpdateId = m_UpdateId;
+		BeginTransfer(addr, msg->ClientToken, now_ms);
 
 		client->Bandwidth += sizeof(ServerUpdateBeginMessage);
 	}
@@ -686,6 +784,7 @@ bool Server::Step()
 		int64 now_ms = Core::QueryMS();
 
 		ClientUpdatePieceMessage *msg = (ClientUpdatePieceMessage *)BUF;
+		ExpireTransfers(now_ms);
 
 		Core::Clients::Node *client = m_Clients->Insert(addr, now_ms);
 
@@ -712,7 +811,12 @@ bool Server::Step()
 			// The update was replaced, while the client downloaded it. The pieces of the new one do not fit to the received ones, the client has to start again.
 			// Pieces, which were sent before, are still fine for the client. Every request is answered like this, until the client began again (with a begin
 			// message), so pieces of the two updates are never mixed, even if this message gets lost.
-			CAM_LOG_DEBUG("The client asks for a piece of an update, which is not the current one anymore.");
+			auto transfer = m_Transfers.find(addr.Value);
+			if (transfer != m_Transfers.end())
+			{
+				CAM_LOG_INFO("The update was replaced while {0} downloaded it ({1:.1f} / {2:.1f} MB), the client starts again with the new one.", FormatAddress(addr), Megabytes(transfer->second.ServedBytes), Megabytes(transfer->second.TotalBytes));
+				m_Transfers.erase(transfer);
+			}
 
 			ServerUpdateChangedMessage changed = {};
 			changed.Header.Type = MessageType::SERVER_UPDATE_CHANGED;
@@ -731,7 +835,6 @@ bool Server::Step()
 			return true;
 		}
 
-		CAM_LOG_DEBUG("Sending update: {0} / {1}", msg->PiecePos, m_UpdateFile.Size);
 		ServerUpdatePieceMessage res = {};
 		res.Header.Version = m_LocalVersion;
 		res.Header.Type = MessageType::SERVER_UPDATE_PIECE;
@@ -748,6 +851,8 @@ bool Server::Step()
 		uint32 send_bytes = sizeof(res) + res.PieceSize;
 		m_Socket->Send(send_buf, send_bytes, addr);
 		client->Bandwidth += send_bytes;
+
+		PieceSent(addr, msg->ClientToken, msg->PiecePos, res.PieceSize, now_ms);
 	}
 	else if (header->Type == MessageType::CLIENT_REQUEST_VERSION)
 	{
@@ -759,9 +864,6 @@ bool Server::Step()
 
 		ClientWantsVersionMessage *msg = (ClientWantsVersionMessage *)BUF;
 		uint32 client_version = msg->LocalVersion;
-
-		CAM_LOG_DEBUG("Received server version request for version: {}", msg->LocalVersion);
-		CAM_LOG_DEBUG("Sending server version response with version: {}", m_LocalVersion);
 
 		ServerVersionInfoMessage res = {};
 		res.Header.Type = MessageType::SERVER_RECEIVE_VERSION;

@@ -3,9 +3,11 @@
 #include <Cam-Core.h>
 #include <atomic>
 #include <filesystem>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "Message.h"
 
@@ -95,6 +97,37 @@ private:
 	bool Step();
 
 	/// <summary>
+	/// An update, which is being sent to a client. Used for the log: how far the client is, and when it has got everything.
+	/// </summary>
+	struct Transfer
+	{
+		uint64 ClientToken = 0;
+		uint32 Version = 0;
+		uint32 TotalBytes = 0;
+		uint32 ServedBytes = 0;			// Bytes of pieces, which were sent at least once (repeated pieces do not count).
+		uint32 ServedPieces = 0;
+		std::vector<bool> Served;
+		int64 StartMS = 0;
+		int64 LastLogMS = 0;
+		int64 LastActivityMS = 0;
+	};
+
+	/// <summary>
+	/// Starts the log of the transfer of the current update to a client (replaces an older one of the same client).
+	/// </summary>
+	void BeginTransfer(Core::addr_t addr, uint64 clientToken, int64 now_ms);
+
+	/// <summary>
+	/// A piece was sent: logs the progress (once per second per client), and that the update was sent completely.
+	/// </summary>
+	void PieceSent(Core::addr_t addr, uint64 clientToken, uint32 piecePos, uint32 pieceSize, int64 now_ms);
+
+	/// <summary>
+	/// Forgets the transfers of clients, which stopped asking for pieces, and logs where they stopped.
+	/// </summary>
+	void ExpireTransfers(int64 now_ms);
+
+	/// <summary>
 	/// The version, which is announced: the configured one, otherwise the one in version.txt in the binary folder, otherwise the one from the source (CamVersion.h).
 	/// </summary>
 	uint32 ResolveVersion() const;
@@ -141,5 +174,9 @@ private:
 
 	// Identifies the content of the current update (never 0). A client, which began to download another update, is told to start again.
 	uint64 m_UpdateId = 0;
+
+	// The updates, which are being sent (by client address). Guarded by m_UpdateMutex.
+	std::map<uint64, Transfer> m_Transfers;
+	int64 m_LastTransferSweepMS = 0;
 };
 
