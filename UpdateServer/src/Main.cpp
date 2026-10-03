@@ -11,15 +11,16 @@ int main(int argc, char *argv[])
 {
 	Core::Init();
 
-	// Set the current working directory
-	Core::FileSystem::Get()->SetCurrentWorkingDirectory("../../../");
+	// Set the current working directory (the project folder, with update_server.cfg)
+	Core::Process::EnterProjectFolder("UpdateServer");
 
 	Core::Config settings(argc, argv, "update_server.cfg");
 
-#ifdef _WIN32
-	const char *default_binary_path = "../CamClient/bin/Debug-windows-x86_64/CamClient";
+	// The files of the camera client, which the build puts together (the program with the files it needs), of the same configuration as this program.
+#ifdef CAM_DEBUG
+	const char *default_binary_path = "../bin/Debug/CamClient-Package";
 #else
-	const char *default_binary_path = "../CamClient/bin/Release-linux/CamClient";
+	const char *default_binary_path = "../bin/Release/CamClient-Package";
 #endif
 
 	ServerConfig config;

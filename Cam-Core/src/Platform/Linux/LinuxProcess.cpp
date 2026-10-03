@@ -64,6 +64,13 @@ namespace Core
 		return result;
 	}
 
+	std::string Process::ExecutablePath()
+	{
+		std::error_code error;
+		std::filesystem::path path = std::filesystem::read_symlink("/proc/self/exe", error);
+		return error ? std::string() : path.string();
+	}
+
 	bool Process::IsRunning(uint32 pid)
 	{
 		if (kill((pid_t)pid, 0) != 0 && errno != EPERM)

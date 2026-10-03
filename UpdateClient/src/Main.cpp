@@ -42,9 +42,9 @@ int main(int argc, char *argv[])
 
 	Core::Init();
 
-	// Set the current working directory
+	// Set the current working directory (the project folder, with update_client.cfg)
 	std::string cwd = "";
-	Core::FileSystem::Get()->SetCurrentWorkingDirectory("../../../");
+	Core::Process::EnterProjectFolder("UpdateClient");
 	Core::FileSystem::Get()->GetCurrentWorkingDirectory(&cwd);
 	if (!query_version)
 	{
@@ -54,10 +54,10 @@ int main(int argc, char *argv[])
 	Core::Config settings(argc, argv, "update_client.cfg");
 
 	// Where the CamClient is, as long as no update was installed (the build output of this machine).
-#ifdef _WIN32
-	const char *default_fallback_path = "../CamClient/bin/Debug-windows-x86_64/CamClient";
+#ifdef CAM_DEBUG
+	const char *default_fallback_path = "../bin/Debug/CamClient-Package";
 #else
-	const char *default_fallback_path = "../CamClient/bin/Release-linux/CamClient";
+	const char *default_fallback_path = "../bin/Release/CamClient-Package";
 #endif
 
 	// Create the client

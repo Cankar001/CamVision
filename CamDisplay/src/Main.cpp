@@ -28,6 +28,7 @@ static void OnStopSignal(int)
 int main(int argc, char *argv[])
 {
 	Core::Init();
+	Core::Process::EnterProjectFolder("CamDisplay");
 
 	Core::Config settings(argc, argv, "display.cfg");
 

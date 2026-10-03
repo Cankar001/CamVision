@@ -92,6 +92,13 @@ namespace Core
 		return result;
 	}
 
+	std::string Process::ExecutablePath()
+	{
+		char path[MAX_PATH * 4];
+		DWORD length = GetModuleFileNameA(nullptr, path, (DWORD)sizeof(path));
+		return std::string(path, length);
+	}
+
 	bool Process::IsRunning(uint32 pid)
 	{
 		HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, pid);

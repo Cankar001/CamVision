@@ -39,7 +39,7 @@ jobs:
 
       - name: Run the tests
         shell: pwsh
-        working-directory: CamTests/bin/${{ matrix.configuration }}-windows-x86_64/CamTests
+        working-directory: bin/${{ matrix.configuration }}
         run: ./CamTests.exe
 
   linux:
@@ -68,5 +68,5 @@ jobs:
         run: make CamTests config=${{ matrix.configuration }} -j"$(nproc)"
 
       - name: Run the tests
-        working-directory: CamTests/bin/${{ matrix.configuration == 'debug' && 'Debug' || 'Release' }}-linux/CamTests
+        working-directory: bin/${{ matrix.configuration == 'debug' && 'Debug' || 'Release' }}
         run: ./CamTests

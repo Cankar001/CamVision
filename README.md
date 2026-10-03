@@ -15,6 +15,8 @@ python Setup.py
 
 `Setup.py` fetches the large files from git lfs (the bundled OpenCV 4.14 for Windows), and generates `CamVision.sln` for Visual Studio 2022. Open it, select `Debug` or `Release` with `x64` and build the solution.
 
+**Where everything is built:** all programs and libraries of all projects go into the same folder, `bin/Debug` or `bin/Release` in the root of the repository, and all intermediate files into `bin-obj/Debug` or `bin-obj/Release` (one sub folder per project). For a clean build, delete the two folders `bin` and `bin-obj`. The programs find their project folder (`CamServer`, `CamClient`, ... with `server.cfg`, `client.cfg`, the models, the known faces) on their own, so they can be started from anywhere. Visual Studio uses the project folder as the working directory, too. The folder `bin/<Configuration>/CamClient-Package` is a copy of the camera client with the files it needs (`CamClient`, the OpenCV DLLs on Windows), this is what the update server ships to the cameras (see Updater).
+
 ## Linux (Debian, Ubuntu, Raspberry Pi OS)
 
 This works on a normal PC (x86_64) as well as on a Raspberry Pi (32 or 64 bit ARM). Linux does not use the OpenCV files from the repository, it uses the OpenCV of the system. Everything is built on the machine, on which it will run.
@@ -66,28 +68,26 @@ make config=release -j2
 - Use `-j2` on a Raspberry Pi 3 or other devices with 1 GB of RAM or less (more parallel compiler jobs can run out of memory). On a PC use `-j$(nproc)`.
 - `config=debug` creates a debug build instead.
 - To build a single program, name it: `make config=release CamClient` (`CamServer`, `CamDisplay`, `UpdateClient` and `UpdateServer` work as well).
-- The programs are created in `<Project>/bin/<Configuration>-linux/<Project>/`, for example `CamClient/bin/Release-linux/CamClient/CamClient`.
+- All programs are created in the same folder, `bin/<Configuration>` in the root of the repository (`bin/Release/CamClient`, `bin/Release/CamServer`, ...), the intermediate files in `bin-obj/<Configuration>/<Project>`. To build from scratch, delete the folders `bin` and `bin-obj` (or run `make clean`).
 - After pulling new changes that add or remove source files, run `python3 Setup.py` again, to regenerate the makefiles. To start from scratch: `make clean`.
 
 ### 5. Run
 
-Start every program **from the folder, in which its executable is located**, the programs expect this working directory.
+Every program makes its project folder (`CamClient`, `CamServer`, ...) its working directory when it starts, so it can be started from anywhere. The settings (`client.cfg`, `server.cfg`, ...) are in the project folder, next to the `.example` files.
 
 Camera client (for example on the Raspberry Pi):
 
 ```shell
-cd CamClient/bin/Release-linux/CamClient
-cp ../../../client.cfg.example client.cfg
-nano client.cfg          # set at least server_ip, and camera_index
-./CamClient
+cp CamClient/client.cfg.example CamClient/client.cfg
+nano CamClient/client.cfg          # set at least server_ip, and camera_index
+bin/Release/CamClient
 ```
 
 Server:
 
 ```shell
-cd CamServer/bin/Release-linux/CamServer
-cp ../../../server.cfg.example ../../../server.cfg    # the server reads server.cfg from the CamServer folder
-./CamServer
+cp CamServer/server.cfg.example CamServer/server.cfg
+bin/Release/CamServer
 ```
 
 Notes for the camera client:
@@ -110,8 +110,8 @@ Wants=network-online.target
 
 [Service]
 User=pi
-WorkingDirectory=/home/pi/CamVision/CamClient/bin/Release-linux/CamClient
-ExecStart=/home/pi/CamVision/CamClient/bin/Release-linux/CamClient/CamClient --headless
+WorkingDirectory=/home/pi/CamVision
+ExecStart=/home/pi/CamVision/bin/Release/CamClient --headless
 Restart=always
 RestartSec=5
 
@@ -157,8 +157,8 @@ The server keeps the last `backup_minutes` (5 by default) of every camera in mem
 A display is another computer (for example a Raspberry Pi with a screen), which shows the pictures of the cameras. It connects to the server like a camera client, but tells the server that it is a display: instead of sending frames it **receives** the frames of the cameras from the server, and shows them. This way the screen can be at a different place than the camera, and any number of displays can be set up in the house, each one showing all cameras or just one.
 
 1. **Build** the `CamDisplay` program (like the others, see "Getting started"). On Linux it needs a desktop session for its window (the packages of the Linux setup are enough).
-2. **Configure** it: copy [CamDisplay/display.cfg.example](CamDisplay/display.cfg.example) to `display.cfg` in the folder of the executable and set at least `server_ip` (the address of the computer, on which the server runs). The other settings are described in the example.
-3. **Start** `CamDisplay` from the folder of the executable. Everything can also be given on the command line: `CamDisplay --server_ip=192.168.1.20 --camera="Front door"`.
+2. **Configure** it: copy [CamDisplay/display.cfg.example](CamDisplay/display.cfg.example) to `display.cfg` (in the same folder, `CamDisplay`) and set at least `server_ip` (the address of the computer, on which the server runs). The other settings are described in the example.
+3. **Start** `CamDisplay`. Everything can also be given on the command line: `CamDisplay --server_ip=192.168.1.20 --camera="Front door"`.
 
 - **What it shows:** all cameras next to each other in a grid (1 camera fills the screen, 2 are side by side, 4 are 2 x 2, ...), or only one camera, if `camera` is set. The name of every camera is written into its picture. A camera, which stopped sending, is shown as "no signal", and disappears after 30 seconds. While the display cannot reach the server, it says so on the screen, and it connects by itself as soon as the server is there (also after the server was restarted or the network was down).
 - **Fullscreen:** the window always covers the whole screen, without a border or a title bar. **`Esc` shuts the display down** (`Q` does the same, `Ctrl+C` in the terminal too).
@@ -170,8 +170,8 @@ A display is another computer (for example a Raspberry Pi with a screen), which 
 [Desktop Entry]
 Type=Application
 Name=CamVision display
-Path=/home/pi/CamVision/CamDisplay/bin/Release-linux/CamDisplay
-Exec=/home/pi/CamVision/CamDisplay/bin/Release-linux/CamDisplay
+Path=/home/pi/CamVision
+Exec=/home/pi/CamVision/bin/Release/CamDisplay
 ```
 
 **Security:** the connection is not encrypted and not authenticated. Everybody, who can reach the server in the network, can connect a display and see all cameras. Use it only in a network you trust (the home network behind your router), and never open the port of the server to the internet.
@@ -188,7 +188,7 @@ It uses the models YuNet (detection) and SFace (recognition) of OpenCV, no other
 
 **Faces on the displays:** the server draws the boxes and names into the pictures before it sends them to the displays, so every display shows the same as the preview of the server. The pictures keep their frame rate, the boxes are those of the latest analysis (up to `1 / face_fps` seconds old, and they disappear, if the analysis stops for 2 seconds). The server draws and compresses a picture once, even if several displays show it. This costs nothing noticeable in a Release build, but a lot in a Debug build. `face_on_displays = false` sends the plain pictures instead.
 
-**Check the setup without a camera:** `CamServer --face_test=photo.jpg` analyzes one photo, prints the faces it finds (and who they are), and stores `photo.jpg.faces.jpg` with the faces marked. Run it from the folder of the executable like the server. A face, which is not recognized, shows the best similarity and the needed value, so `face_match_threshold` can be tuned.
+**Check the setup without a camera:** `CamServer --face_test=photo.jpg` analyzes one photo, prints the faces it finds (and who they are), and stores `photo.jpg.faces.jpg` with the faces marked. Relative paths, like the photo, are relative to the `CamServer` folder, the working directory of the server. A face, which is not recognized, shows the best similarity and the needed value, so `face_match_threshold` can be tuned.
 
 The accuracy is good for frontal faces in decent light. It is a convenience feature, not a security system: do not use it to grant access to anything. Photos of people and the recognition results are personal data, handle them according to the laws, which apply to you (in the EU the GDPR).
 
@@ -221,7 +221,7 @@ The complete list with explanations is in the example files, copy them and edit 
 - [CamClient/client.cfg.example](CamClient/client.cfg.example): server address and port, camera index and size, headless mode, JPEG quality and bandwidth tuning (`send_width`, `max_fps`).
 - [CamServer/server.cfg.example](CamServer/server.cfg.example): port, minutes of video kept per camera, timeout for dead clients, preview windows.
 
-The client reads `client.cfg` from the folder, in which it is started. The server reads `server.cfg` from the `CamServer` project folder.
+Every program reads its settings file (`client.cfg`, `server.cfg`, `display.cfg`, ...) from its project folder (`CamClient`, `CamServer`, ...). A CamClient, which was installed by the updater, runs in the folder it was installed to (`install_path`) and reads `client.cfg` from there.
 
 ## Updater
 
@@ -248,14 +248,14 @@ UpdateClient --query-version              # prints e.g. 101
 
 The signing keys are created once by the update server (`public_key_path` and `private_key_path` in `update_server.cfg`) and reused for all updates. **The client pins the public key:** the first update is verified with the key from the server and the key is stored in the client's `public_key_path`, all later updates must be signed with the same key. For devices in the field it is safer to copy the server's public key file to the device before the first start. If you replace the signing key on purpose (`regenerate_keys = true`), delete the pinned key file on all clients.
 
-The settings are explained in [UpdateServer/update_server.cfg.example](UpdateServer/update_server.cfg.example) and [UpdateClient/update_client.cfg.example](UpdateClient/update_client.cfg.example). The update server reads `update_server.cfg` and the update client `update_client.cfg` from the folder, in which they are started (the `UpdateServer` / `UpdateClient` project folder, if started from a build folder, like the other programs).
+The settings are explained in [UpdateServer/update_server.cfg.example](UpdateServer/update_server.cfg.example) and [UpdateClient/update_client.cfg.example](UpdateClient/update_client.cfg.example). The update server reads `update_server.cfg` and the update client `update_client.cfg` from their project folder (`UpdateServer` / `UpdateClient`).
 
 # Tests
 
 The tests are in the project `CamTests`, a console program, which runs all tests and returns a value other than 0 if one fails. They cover the shared code (`Cam-Core`: settings, files, signatures and keys, sockets, zip files, the process handling), the message layout of the protocol, and the parts of the server, which record videos (schedule and AVI files). They need neither a camera nor OpenCV.
 
-- **Windows:** run `Setup.py`, open `CamVision.sln`, build the project `CamTests` and run it (or run `CamTests.exe` from the output folder). From a console: `msbuild CamVision.sln "/t:Tests\CamTests" /p:Configuration=Debug /p:Platform=x64`.
-- **Linux:** `python3 Setup.py`, then `make CamTests config=debug -j4` and run `CamTests/bin/Debug-linux/CamTests/CamTests`.
+- **Windows:** run `Setup.py`, open `CamVision.sln`, build the project `CamTests` and run it (or run `bin/Debug/CamTests.exe`). From a console: `msbuild CamVision.sln "/t:Tests\CamTests" /p:Configuration=Debug /p:Platform=x64`.
+- **Linux:** `python3 Setup.py`, then `make CamTests config=debug -j4` and run `bin/Debug/CamTests`.
 - `CamTests Config` runs only the tests, whose name contains "Config" (several words can be given), `CamTests --list` lists all tests.
 
 New tests are added with `TEST(Suite, Name) { ... }` in a file in `CamTests/src` (it is picked up on the next premake run), with `CHECK(...)` and `CHECK_EQ(a, b)`, which report a failure and go on, and `REQUIRE(...)`, which also ends the test. A test, which needs files, uses `TempDir` (a folder, which is deleted again).

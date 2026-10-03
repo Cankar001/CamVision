@@ -7,12 +7,10 @@ project "CamDisplay"
 	
 	dependson
 	{
-		"Cam-Core"
+		"Cam-Core",
+		"OpenCV"
 	}
 
-    targetdir ("bin/" .. outputdir .. "/%{prj.name}")
-    debugdir ("bin/" .. outputdir .. "/%{prj.name}")
-    objdir ("bin-obj/" .. outputdir .. "/%{prj.name}")
 
     files
     { 
@@ -49,12 +47,6 @@ project "CamDisplay"
 			"%{LibDir.opencv_world_debug}",
 		}
 
-		postbuildcommands
-		{	
-			("{COPY} %{wks.location}CamClient/vendor/opencv/lib/opencv_world4140d.dll %{cfg.targetdir}"),
-			("{COPY} %{wks.location}CamClient/vendor/opencv/lib/opencv_world4140.dll %{cfg.targetdir}"),
-			("{COPY} %{wks.location}CamClient/vendor/opencv/lib/opencv_videoio_ffmpeg4140_64.dll %{cfg.targetdir}"),
-		}
 
 	filter { "system:linux", "configurations:Debug" }
 		systemversion "latest"
@@ -109,12 +101,6 @@ project "CamDisplay"
 			"%{LibDir.opencv_world}",
 		}
 
-		postbuildcommands
-		{	
-			("{COPY} %{wks.location}CamClient/vendor/opencv/lib/opencv_world4140d.dll %{cfg.targetdir}"),
-			("{COPY} %{wks.location}CamClient/vendor/opencv/lib/opencv_world4140.dll %{cfg.targetdir}"),
-			("{COPY} %{wks.location}CamClient/vendor/opencv/lib/opencv_videoio_ffmpeg4140_64.dll %{cfg.targetdir}"),
-		}
 
 	filter { "system:linux", "configurations:Release" }
 		systemversion "latest"

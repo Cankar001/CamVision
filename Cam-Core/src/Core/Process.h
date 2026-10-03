@@ -22,6 +22,20 @@ namespace Core
 		static std::vector<uint32> FindByExecutable(const std::string &path);
 
 		/// <summary>
+		/// The file of the running program.
+		/// </summary>
+		static std::string ExecutablePath();
+
+		/// <summary>
+		/// All programs are built into the same folder (bin/Debug or bin/Release in the root of the repository). A program, which runs from there, makes the folder
+		/// of its project (for example CamServer, with the settings, the models, the known faces) its working directory, wherever it was started from.
+		/// A program, which does not run from there (it was installed by the updater, or copied to a device), keeps its working directory.
+		/// </summary>
+		/// <param name="project">The name of the project folder, for example "CamServer".</param>
+		/// <returns>Returns true, if the working directory was changed.</returns>
+		static bool EnterProjectFolder(const std::string &project);
+
+		/// <summary>
 		/// True, if the process is still running.
 		/// </summary>
 		static bool IsRunning(uint32 pid);

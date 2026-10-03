@@ -8,7 +8,7 @@ if __name__ == '__main__':
     print('Your detected System is: ' + platform.system())
     
     # If the user runs the script for the first time, make sure all dependencies exist
-    if (not os.path.exists('CamClient/bin')):
+    if (not os.path.exists('bin')):
         # The large files in git lfs are the Windows only OpenCV binaries, Linux uses the OpenCV of the system.
         if (platform.system() != 'Linux'):
             print('Running the installer for the first time, making sure all lfs data is up-to-date...')

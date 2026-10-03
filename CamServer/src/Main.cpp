@@ -61,7 +61,7 @@ static int SendControlCommand(uint16 port, const std::string &command)
 int main(int argc, char *argv[])
 {
 	Core::Init();
-	Core::FileSystem::Get()->SetCurrentWorkingDirectory("../../../");
+	Core::Process::EnterProjectFolder("CamServer");
 
 	std::string cwd = "";
 	bool cwd_success = Core::FileSystem::Get()->GetCurrentWorkingDirectory(&cwd);

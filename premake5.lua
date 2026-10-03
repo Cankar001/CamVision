@@ -1,16 +1,16 @@
 include "./vendor/bin/premake/solution_items.lua"
 
--- On Linux the architecture is not part of the name, because it is the one of the machine, which builds it (x86_64, ARM, ...).
-if os.target() == "linux" then
-	outputdir = "%{cfg.buildcfg}-%{cfg.system}"
-else
-	outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
-end
-
 include "Dependencies.lua"
 
 workspace "CamVision"
     configurations { "Debug", "Release" }
+
+	-- Everything is built into the same two folders: the programs and libraries of all projects into bin/<Configuration>, the intermediate files into
+	-- bin-obj/<Configuration>/<Project> (one folder per project, as the files of different projects have the same names). To build from scratch, delete
+	-- these two folders. The programs find their project folder (settings, models, ...) from the place of their executable, see Core::Process::EnterProjectFolder.
+	targetdir "%{wks.location}/bin/%{cfg.buildcfg}"
+	objdir "%{wks.location}/bin-obj/%{cfg.buildcfg}/%{prj.name}"
+	debugdir "%{prj.location}"
 
 	solution_items
 	{

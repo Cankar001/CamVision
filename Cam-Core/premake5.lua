@@ -4,8 +4,6 @@ project "Cam-Core"
 	cppdialect "C++17"
 	staticruntime "off"
 
-    targetdir ("bin/" .. outputdir .. "/%{prj.name}")
-    objdir ("bin-obj/" .. outputdir .. "/%{prj.name}")
 
     files
     { 

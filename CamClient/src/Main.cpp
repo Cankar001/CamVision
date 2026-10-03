@@ -40,6 +40,9 @@ int main(int argc, char *argv[])
 {
 	Core::Init();
 
+	// Started from the build folder, the working directory is the CamClient folder (client.cfg). Installed by the updater, it stays in its own folder.
+	Core::Process::EnterProjectFolder("CamClient");
+
 	// Settings come from client.cfg (in the working directory, or --config=path) and can be overridden with --key=value arguments.
 	Core::Config settings(argc, argv, "client.cfg");
 

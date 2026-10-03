@@ -7,12 +7,10 @@ project "CamClient"
 	
 	dependson
 	{
-		"Cam-Core"
+		"Cam-Core",
+		"OpenCV"
 	}
 
-    targetdir ("bin/" .. outputdir .. "/%{prj.name}")
-    debugdir ("bin/" .. outputdir .. "/%{prj.name}")
-    objdir ("bin-obj/" .. outputdir .. "/%{prj.name}")
 
     files
     { 
@@ -49,12 +47,6 @@ project "CamClient"
 			"%{LibDir.opencv_world_debug}",
 		}
 
-		postbuildcommands
-		{	
-			("{COPY} %{wks.location}CamClient/vendor/opencv/lib/opencv_world4140d.dll %{cfg.targetdir}"),
-			("{COPY} %{wks.location}CamClient/vendor/opencv/lib/opencv_world4140.dll %{cfg.targetdir}"),
-			("{COPY} %{wks.location}CamClient/vendor/opencv/lib/opencv_videoio_ffmpeg4140_64.dll %{cfg.targetdir}"),
-		}
 
 	filter { "system:linux", "configurations:Debug" }
 		systemversion "latest"
@@ -109,12 +101,6 @@ project "CamClient"
 			"%{LibDir.opencv_world}",
 		}
 		
-		postbuildcommands
-		{	
-			("{COPY} %{wks.location}CamClient/vendor/opencv/lib/opencv_world4140d.dll %{cfg.targetdir}"),
-			("{COPY} %{wks.location}CamClient/vendor/opencv/lib/opencv_world4140.dll %{cfg.targetdir}"),
-			("{COPY} %{wks.location}CamClient/vendor/opencv/lib/opencv_videoio_ffmpeg4140_64.dll %{cfg.targetdir}"),
-		}
 
 	filter { "system:linux", "configurations:Release" }
 		systemversion "latest"
@@ -154,3 +140,30 @@ project "CamClient"
 		}
 
 	
+
+	-- The files, which the update server ships to the cameras (see UpdateServer): the program together with the files it needs. All programs are built into
+	-- the same folder (bin/<Configuration>), so the update server must not ship that folder as it is, it would ship all programs.
+	filter { "system:windows", "configurations:Debug" }
+		postbuildcommands
+		{
+			("{MKDIR} %{cfg.targetdir}/CamClient-Package"),
+			("{COPY} %{cfg.targetdir}/CamClient.exe %{cfg.targetdir}/CamClient-Package"),
+			("{COPY} %{cfg.targetdir}/opencv_world4140d.dll %{cfg.targetdir}/CamClient-Package"),
+			("{COPY} %{cfg.targetdir}/opencv_videoio_ffmpeg4140_64.dll %{cfg.targetdir}/CamClient-Package"),
+		}
+
+	filter { "system:windows", "configurations:Release" }
+		postbuildcommands
+		{
+			("{MKDIR} %{cfg.targetdir}/CamClient-Package"),
+			("{COPY} %{cfg.targetdir}/CamClient.exe %{cfg.targetdir}/CamClient-Package"),
+			("{COPY} %{cfg.targetdir}/opencv_world4140.dll %{cfg.targetdir}/CamClient-Package"),
+			("{COPY} %{cfg.targetdir}/opencv_videoio_ffmpeg4140_64.dll %{cfg.targetdir}/CamClient-Package"),
+		}
+
+	filter "system:linux"
+		postbuildcommands
+		{
+			("{MKDIR} %{cfg.targetdir}/CamClient-Package"),
+			("{COPY} %{cfg.targetdir}/CamClient %{cfg.targetdir}/CamClient-Package"),
+		}

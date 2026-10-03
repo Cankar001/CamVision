@@ -14,8 +14,9 @@ install_path = ../CamClient/new_update
 
 # Folder with the CamClient, which was there before any update (for example the build output). It is started as long as no update was installed
 # into install_path yet. After the first update, the CamClient from install_path is used.
-# Windows default: ../CamClient/bin/Debug-windows-x86_64/CamClient     Linux default: ../CamClient/bin/Release-linux/CamClient
-fallback_path = ../CamClient/bin/Debug-windows-x86_64/CamClient
+# Default: the files of the camera client, which the build puts together: ../bin/Debug/CamClient-Package (../bin/Release/CamClient-Package for a Release build
+# of the update client).
+fallback_path = ../bin/Debug/CamClient-Package
 
 # The trusted public key of the update server (pinned key). If this file exists, only updates signed with this key are installed.
 # If it does not exist, the key sent by the server is trusted once, with the first update, and stored here. Delete the file to trust a new server key.
