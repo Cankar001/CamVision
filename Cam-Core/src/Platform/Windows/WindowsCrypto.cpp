@@ -9,7 +9,9 @@ namespace Core
 {
 	WindowsCrypto::WindowsCrypto()
 	{
-		if (!CryptAcquireContextW(&m_HProv, 0, MS_ENH_RSA_AES_PROV, PROV_RSA_AES, 0))
+		// No key container is needed (the keys are exported to files, not stored in Windows). Without CRYPT_VERIFYCONTEXT this fails on a machine, which
+		// has no default key container yet (a fresh installation, a build server).
+		if (!CryptAcquireContextW(&m_HProv, 0, MS_ENH_RSA_AES_PROV, PROV_RSA_AES, CRYPT_VERIFYCONTEXT))
 		{
 			m_HProv = 0;
 		}
