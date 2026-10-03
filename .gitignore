@@ -34,3 +34,4 @@ CamServer/known_faces/*
 !CamServer/known_faces/README.md
 CamServer/faces/
 display.cfg
+CamServer/recordings/

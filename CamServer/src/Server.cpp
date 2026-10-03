@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -99,12 +100,26 @@ void Server::Run()
 			break;
 		}
 
+		// Not blocking, so a request to stop is noticed (Step waits a moment, if nothing has arrived).
+		m_Socket->SetNonBlocking(true);
+
 		for (;;)
 		{
+			if (m_StopRequested)
+			{
+				break;
+			}
+
 			if (!Step())
 			{
 				break;
 			}
+		}
+
+		if (m_StopRequested)
+		{
+			CAM_LOG_INFO("Stopping the server...");
+			break;
 		}
 
 		CAM_LOG_ERROR("Network interface failure.");
@@ -124,11 +139,21 @@ void Server::Run()
 	{
 		m_ForwardThread.join();
 	}
+
+	if (m_ControlThread.joinable())
+	{
+		m_ControlThread.join();
+	}
 }
 
 void Server::StartFramePreviews()
 {
 	m_FramePreviewThread = std::thread(&Server::FramePreview, std::ref(*this));
+}
+
+void Server::Stop()
+{
+	m_StopRequested = true;
 }
 
 bool Server::Step()
@@ -140,6 +165,13 @@ bool Server::Step()
 	if (len < 0)
 	{
 		return false;
+	}
+
+	if (len == 0)
+	{
+		// nothing there yet
+		Core::SleepMS(1);
+		return true;
 	}
 
 	if (len < sizeof(header_t))
@@ -713,7 +745,17 @@ bool Server::OnClientFrameChunk(Core::addr_t &clientAddr, Byte *message, int32 a
 	if (assembly.ReceivedChunks == assembly.ChunkCount)
 	{
 		// Frame is complete. It is stored still encoded, which keeps the memory footprint of the ring buffer small.
-		client->Frames.Push(assembly.Data);
+		RecordedFrame recorded;
+		recorded.Data = assembly.Data;
+		recorded.TimeMS = Recorder::NowMS();
+		client->Frames.Push(recorded);
+
+		// The recording on schedule (it writes on a thread of its own, this only hands the frame over).
+		if (m_Recorder)
+		{
+			m_Recorder->AddFrame(client->CameraId, client->FrameTitle, recorded);
+		}
+
 		client->LatestFrame = assembly.Data;
 		++client->LatestFrameNumber;
 
@@ -854,6 +896,17 @@ void Server::FramePreview()
 			}
 
 			char key = (char)cv::waitKey(1);
+			if (key == 'r' && m_Recorder)
+			{
+				// Saves the last minutes of all cameras (in the background, the preview must not stop).
+				std::thread([this]()
+				{
+					uint32 files = 0;
+					std::string report = SaveLastMinutes(m_Config.RecordDefaultMinutes, "", "last" + std::to_string(m_Config.RecordDefaultMinutes) + "min", &files);
+					CAM_LOG_INFO("Saved the last {0} minutes (key R): {1}", m_Config.RecordDefaultMinutes, report);
+				}).detach();
+			}
+
 			if (key == 'q')
 			{
 				// Close all windows and keep them closed, like closing every window by hand.
@@ -1145,6 +1198,18 @@ void Server::FaceLoop()
 				}
 
 				NotifyUnknownPerson(job.Title, unknown_face, snapshot_file, snapshot_jpeg);
+
+				// The video of the minutes before and during the event is kept (in the background, the analysis must go on).
+				if (m_Config.RecordOnUnknownPerson && m_Recorder)
+				{
+					std::string camera = job.Title;
+					std::thread([this, camera]()
+					{
+						uint32 files = 0;
+						std::string report = SaveLastMinutes(m_Config.RecordEventMinutes, camera, "unknown_person", &files);
+						CAM_LOG_INFO("Saved the last {0} minute(s) of {1} because of an unknown person: {2}", m_Config.RecordEventMinutes, camera, report);
+					}).detach();
+				}
 			}
 		}
 	}
@@ -1163,4 +1228,190 @@ void Server::NotifyUnknownPerson(const std::string &camera, const FaceResult &fa
 
 	// The notifier collects the events and sends them in one email, see email_collect_seconds.
 	m_Notifier->AddUnknownPerson(camera, face.Similarity, m_Config.Faces.MatchThreshold, face.Score, snapshotJpeg);
+}
+
+void Server::StartRecording()
+{
+	m_Recorder = std::make_unique<Recorder>(m_Config.Recording);
+	m_Recorder->Start();
+
+	if (m_Config.ControlPort != 0)
+	{
+		m_ControlThread = std::thread(&Server::ControlLoop, std::ref(*this));
+	}
+}
+
+std::string Server::SaveLastMinutes(uint32 minutes, const std::string &cameraFilter, const std::string &label, uint32 *savedFiles)
+{
+	*savedFiles = 0;
+	if (!m_Recorder)
+	{
+		return "recording is not available";
+	}
+
+	// The buffer holds the last VideoBackupDuration minutes, no more can be saved.
+	uint32 available_minutes = m_Config.VideoBackupDuration;
+	std::string note;
+	if (minutes == 0)
+	{
+		minutes = m_Config.RecordDefaultMinutes;
+	}
+
+	if (minutes > available_minutes)
+	{
+		note = " (the server only keeps the last " + std::to_string(available_minutes) + " minutes, see backup_minutes)";
+		minutes = available_minutes;
+	}
+
+	struct Clip
+	{
+		std::string Camera;
+		std::vector<RecordedFrame> Frames;
+	};
+
+	std::vector<Clip> clips;
+	int64 from_ms = Recorder::NowMS() - (int64)minutes * 60 * 1000;
+	{
+		std::lock_guard<std::mutex> lock(m_ClientsMutex);
+		for (auto &client : m_Clients)
+		{
+			if (!cameraFilter.empty() && !EqualsIgnoreCase(cameraFilter, client->FrameTitle))
+			{
+				continue;
+			}
+
+			Clip clip;
+			clip.Camera = client->FrameTitle;
+			for (uint32 i = 0; i < client->Frames.Size(); ++i)
+			{
+				const RecordedFrame &frame = client->Frames.At(i);
+				if (frame.TimeMS >= from_ms)
+				{
+					clip.Frames.push_back(frame);
+				}
+			}
+
+			if (!clip.Frames.empty())
+			{
+				clips.push_back(std::move(clip));
+			}
+		}
+	}
+
+	if (clips.empty())
+	{
+		return cameraFilter.empty() ? "no camera has sent frames in the last " + std::to_string(minutes) + " minutes" : "the camera '" + cameraFilter + "' is not connected or has sent no frames in the last " + std::to_string(minutes) + " minutes";
+	}
+
+	// Writing takes a moment (large files), but needs no lock anymore: the frames are shared, not copied.
+	std::string report;
+	for (const Clip &clip : clips)
+	{
+		std::string path, error;
+		if (m_Recorder->SaveClip(clip.Camera, clip.Frames, label, &path, &error))
+		{
+			++(*savedFiles);
+			report += (report.empty() ? "" : "; ") + clip.Camera + ": " + path + " (" + std::to_string(clip.Frames.size()) + " frames)";
+		}
+		else
+		{
+			report += (report.empty() ? "" : "; ") + clip.Camera + ": FAILED, " + error;
+		}
+	}
+
+	return report + note;
+}
+
+void Server::ControlLoop()
+{
+	Core::Socket *socket = Core::Socket::Create();
+	if (!socket->Open() || !socket->BindLoopback(m_Config.ControlPort))
+	{
+		CAM_LOG_ERROR("Could not open the control port {} (is another server running?), the commands (CamServer --record_now, ...) do not work.", m_Config.ControlPort);
+		delete socket;
+		return;
+	}
+
+	socket->SetNonBlocking(true);
+	CAM_LOG_INFO("Control port {} (only reachable from this computer): CamServer --record_now=MINUTES saves the last minutes, --control_status, --control_stop.", m_Config.ControlPort);
+
+	static Byte BUF[2048];
+	while (m_Running && !m_StopRequested)
+	{
+		Core::addr_t sender = {};
+		int32 len = socket->Recv(BUF, sizeof(BUF) - 1, &sender);
+		if (len <= 0)
+		{
+			Core::SleepMS(20);
+			continue;
+		}
+
+		BUF[len] = 0;
+		std::string command((const char *)BUF);
+		while (!command.empty() && (command.back() == 10 || command.back() == 13 || command.back() == 32))
+		{
+			command.pop_back();
+		}
+
+		std::string reply;
+		if (command.rfind("save ", 0) == 0)
+		{
+			// save <minutes> [camera name]
+			std::string rest = command.substr(5);
+			size_t space = rest.find(' ');
+			int minutes = atoi(rest.substr(0, space).c_str());
+			std::string camera = space == std::string::npos ? "" : rest.substr(space + 1);
+			if (minutes <= 0)
+			{
+				reply = "ERROR: the number of minutes is missing";
+			}
+			else
+			{
+				uint32 files = 0;
+				std::string report = SaveLastMinutes((uint32)minutes, camera, "last" + std::to_string(minutes) + "min", &files);
+				reply = (files > 0 ? "OK " : "ERROR ") + std::to_string(files) + " file(s): " + report;
+				CAM_LOG_INFO("Saved the last {0} minute(s) on request: {1}", minutes, report);
+			}
+		}
+		else if (command == "status")
+		{
+			reply = "Cameras:\n";
+			{
+				std::lock_guard<std::mutex> lock(m_ClientsMutex);
+				for (auto &client : m_Clients)
+				{
+					uint32 frames = client->Frames.Size();
+					double seconds = frames > 1 ? (client->Frames.At(frames - 1).TimeMS - client->Frames.At(0).TimeMS) / 1000.0 : 0.0;
+					char line[160];
+					snprintf(line, sizeof(line), "  %s: %u frames buffered (%.0f seconds)\n", client->FrameTitle.c_str(), frames, seconds);
+					reply += line;
+				}
+
+				if (m_Clients.empty())
+				{
+					reply += "  (none connected)\n";
+				}
+
+				reply += "Displays connected: " + std::to_string(m_Displays.size()) + "\n";
+			}
+
+			reply += "Recordings folder: " + m_Config.Recording.Path + "\n";
+			reply += "Scheduled recording: " + (m_Recorder && m_Recorder->IsScheduled() ? m_Config.Recording.Schedule : std::string("off")) + "\n";
+			reply += "Buffer: the last " + std::to_string(m_Config.VideoBackupDuration) + " minutes per camera";
+		}
+		else if (command == "stop")
+		{
+			reply = "OK, the server is stopping";
+			CAM_LOG_INFO("Stop requested through the control port.");
+			m_StopRequested = true;
+		}
+		else
+		{
+			reply = "ERROR: unknown command (save <minutes> [camera], status, stop)";
+		}
+
+		socket->Send(reply.c_str(), (int32)reply.size(), sender);
+	}
+
+	delete socket;
 }

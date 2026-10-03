@@ -107,6 +107,15 @@ namespace Core
                 Pop();
         }
 
+        /// <summary>
+        /// The element at a position counted from the oldest one (0 is the oldest, Size() - 1 the newest). Unlike operator[], which is the position in the memory.
+        /// </summary>
+        T &At(uint32 index)
+        {
+            assert(index < m_Size);
+            return m_Data[(m_ReadPos + index) % m_Capacity];
+        }
+
         T &operator[](uint32 index)
         {
             assert(index < m_Size);

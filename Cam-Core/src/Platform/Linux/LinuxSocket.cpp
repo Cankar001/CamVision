@@ -69,6 +69,16 @@ namespace Core
 		return (bind(m_Socket, (struct sockaddr *)&address, sizeof(address)) == 0);
 	}
 	
+	bool LinuxSocket::BindLoopback(uint16 port)
+	{
+		struct sockaddr_in address = {};
+		address.sin_family = AF_INET;
+		address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		address.sin_port = htons(port);
+
+		return (bind(m_Socket, (struct sockaddr *)&address, sizeof(address)) == 0);
+	}
+
 	int32 LinuxSocket::Recv(void *dst, int32 dst_bytes, addr_t *addr)
 	{
 		int32 handle = m_Socket;

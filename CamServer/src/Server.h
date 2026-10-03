@@ -6,6 +6,7 @@
 #include <vector>
 #include <chrono>
 #include <memory>
+#include <atomic>
 #include <set>
 #include <mutex>
 #include <thread>
@@ -16,6 +17,7 @@
 #include "FaceAnalyzer.h"
 #include "Mailer.h"
 #include "Notifier.h"
+#include "Recorder.h"
 
 struct ServerConfig
 {
@@ -43,6 +45,28 @@ struct ServerConfig
 	/// The settings of the face detection and recognition.
 	/// </summary>
 	FaceConfig Faces;
+
+	/// <summary>
+	/// The settings of the recordings (schedule, folder, ...).
+	/// </summary>
+	RecorderConfig Recording;
+
+	/// <summary>
+	/// How many minutes are saved, if nothing else is said (the key R in the preview window).
+	/// </summary>
+	uint32 RecordDefaultMinutes = 5;
+
+	/// <summary>
+	/// Saves the last minutes of a camera automatically, when an unknown person is seen by it (needs the face recognition).
+	/// </summary>
+	bool RecordOnUnknownPerson = false;
+	uint32 RecordEventMinutes = 1;
+
+	/// <summary>
+	/// The port of the control channel (only reachable from this computer), with which a running server is told to save recordings, to report its
+	/// status, or to stop. 0 turns it off.
+	/// </summary>
+	uint16 ControlPort = 45650;
 
 	/// <summary>
 	/// The settings for the emails, which are sent when an unknown person is seen.
@@ -86,7 +110,7 @@ struct ClientEntry
 	/// <summary>
 	/// The last X minutes of encoded frames, kept in memory for saving to disk after something happened.
 	/// </summary>
-	Core::RingBuffer<EncodedFrame> Frames;
+	Core::RingBuffer<RecordedFrame> Frames;
 	std::string FrameTitle;
 
 	FrameAssembly Assembly;
@@ -172,6 +196,26 @@ public:
 	/// </summary>
 	void StartNotifications();
 
+	/// <summary>
+	/// Starts the recording (on schedule), the saving of the last minutes on demand, and the control channel.
+	/// </summary>
+	void StartRecording();
+
+	/// <summary>
+	/// Makes Run() return, and finishes all recordings. Safe to call from a signal handler.
+	/// </summary>
+	void Stop();
+
+	/// <summary>
+	/// Saves the last minutes of the frames of a camera (or of all cameras) as video files.
+	/// </summary>
+	/// <param name="minutes">How many minutes, at most as many as the buffer holds (VideoBackupDuration).</param>
+	/// <param name="cameraFilter">The name of the camera, or empty for all cameras.</param>
+	/// <param name="label">Part of the file name.</param>
+	/// <param name="savedFiles">Receives the number of files.</param>
+	/// <returns>A text for the user: the files, or what went wrong.</returns>
+	std::string SaveLastMinutes(uint32 minutes, const std::string &cameraFilter, const std::string &label, uint32 *savedFiles);
+
 private:
 
 	bool Step();
@@ -204,6 +248,11 @@ private:
 	/// Analyzes the latest frames of all cameras on a thread of its own, and reports the people who are seen.
 	/// </summary>
 	void FaceLoop();
+
+	/// <summary>
+	/// The control channel: commands of a program on this computer (CamServer --record_now, ...).
+	/// </summary>
+	void ControlLoop();
 
 	/// <summary>
 	/// Called, when an unknown person is seen by a camera (a face, which matches nobody of the known people), at most once per cooldown and camera.
@@ -240,6 +289,9 @@ private:
 	std::unique_ptr<FaceAnalyzer> m_FaceAnalyzer;
 	std::unique_ptr<Mailer> m_Mailer;
 	std::unique_ptr<Notifier> m_Notifier;
+	std::unique_ptr<Recorder> m_Recorder;
+	std::thread m_ControlThread;
+	std::atomic<bool> m_StopRequested{ false };
 
 	// The cameras, which timed out and did not come back yet (guarded by m_ClientsMutex), to report them when they are back.
 	std::set<std::string> m_OfflineCameras;

@@ -137,6 +137,21 @@ journalctl -u camvision-client -f      # shows the log
 | `Could not connect to server` | Check `server_ip` and `server_port`, the server must be running, and UDP on the server port must be allowed by the firewall of the server. |
 | `Gtk-WARNING: cannot open display` | There is no desktop session. Set `headless = true` (client) or `preview = false` (server). |
 
+# Recordings
+
+The server keeps the last `backup_minutes` (5 by default) of every camera in memory. You can save these minutes as a video file at any time, and you can record continuously at fixed times. The videos are AVI files (Motion JPEG): the pictures are written as they were received, without converting them again, so saving is fast and loses no quality. They play in VLC, Windows Media Player and most other players. Everything is stored in `recordings/<camera name>/` (`recordings_path`).
+
+**Save the last minutes (on demand):**
+
+- `CamServer --record_now=5` saves the last 5 minutes of all cameras, `CamServer --record_now=5 --record_camera=Front` only of the camera "Front". This talks to the running server (through the control port, which is only reachable from the same computer), prints the files, and quits. More than `backup_minutes` cannot be saved.
+- The key **`R`** in a preview window of the server saves the last `record_default_minutes` of all cameras.
+- With `record_on_unknown_person = true` the server saves the last `record_event_minutes` of a camera automatically, when it sees an unknown person (needs the face recognition). The video shows how the person came in.
+- `CamServer --control_status` shows what is buffered, and `CamServer --control_stop` stops the server properly.
+
+**Record at fixed times (schedule):** `record_schedule` in `server.cfg` lists the times, at which everything is recorded continuously, for example `22:00-06:00` (every night), or `Mon-Fri 08:00-18:00; Sat,Sun 00:00-23:59`. A time range, which ends before it starts, goes over midnight. The local time of the server is used. `record_cameras` limits it to some cameras. A recording is split into files of `record_segment_minutes` (10 by default), because a file is only playable when it is finished.
+
+**The disk:** old videos are deleted automatically, after `record_keep_days` days (14 by default) and when all videos together are larger than `record_max_gb` gigabytes (20 by default, the oldest ones first). Set them to 0 to keep everything, but then watch the disk: a camera produces around 4 to 10 GB per day. Stop the server with `Ctrl+C` or `CamServer --control_stop`, so that the file, which is being written, is finished (otherwise the last file may not be playable).
+
 # Displays
 
 A display is another computer (for example a Raspberry Pi with a screen), which shows the pictures of the cameras. It connects to the server like a camera client, but tells the server that it is a display: instead of sending frames it **receives** the frames of the cameras from the server, and shows them. This way the screen can be at a different place than the camera, and any number of displays can be set up in the house, each one showing all cameras or just one.

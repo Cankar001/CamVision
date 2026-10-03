@@ -24,6 +24,7 @@ namespace Core
 		virtual void Close() override;
 
 		virtual bool Bind(uint16 port) override;
+		virtual bool BindLoopback(uint16 port) override;
 
 		virtual int32 Recv(void *dst, int32 dst_bytes, addr_t *addr) override;
 		virtual int32 Send(void const *src, int32 src_bytes, addr_t addr) override;

@@ -1,7 +1,62 @@
+#include <csignal>
 #include <cstdlib>
 #include <iostream>
 
 #include "Server.h"
+
+static Server *g_Server = nullptr;
+
+// Ctrl+C (or a service stop) ends the server properly: the recordings, which are being written, are finished and playable.
+static void OnStopSignal(int)
+{
+	if (g_Server)
+	{
+		g_Server->Stop();
+	}
+}
+
+// Sends a command to the running server (control port) and prints the answer. Returns the exit code of the program.
+static int SendControlCommand(uint16 port, const std::string &command)
+{
+	if (port == 0)
+	{
+		std::cerr << "The control port is turned off (control_port = 0)." << std::endl;
+		return 1;
+	}
+
+	Core::Socket *socket = Core::Socket::Create();
+	if (!socket->Open() || !socket->SetNonBlocking(true))
+	{
+		std::cerr << "Could not open a socket." << std::endl;
+		delete socket;
+		return 1;
+	}
+
+	Core::addr_t server = socket->Lookup("127.0.0.1", port);
+	socket->Send(command.c_str(), (int32)command.size(), server);
+
+	// Saving a long video takes a moment.
+	static Byte BUF[8192];
+	for (int waited_ms = 0; waited_ms < 120000; waited_ms += 20)
+	{
+		Core::addr_t sender = {};
+		int32 len = socket->Recv(BUF, sizeof(BUF) - 1, &sender);
+		if (len > 0)
+		{
+			BUF[len] = 0;
+			std::string reply((const char *)BUF);
+			std::cout << reply << std::endl;
+			delete socket;
+			return reply.rfind("ERROR", 0) == 0 ? 1 : 0;
+		}
+
+		Core::SleepMS(20);
+	}
+
+	std::cerr << "No answer from the server on port " << port << ". Is it running (and is control_port the same)?" << std::endl;
+	delete socket;
+	return 1;
+}
 
 int main(int argc, char *argv[])
 {
@@ -63,6 +118,62 @@ int main(int argc, char *argv[])
 	faces.Snapshots = settings.GetBool("face_snapshots", faces.Snapshots);
 	faces.SnapshotPath = settings.GetString("face_snapshot_path", faces.SnapshotPath);
 	faces.EventCooldownSeconds = (uint32)std::max(settings.GetInt("face_event_cooldown", faces.EventCooldownSeconds), 0);
+
+	RecorderConfig &recording = config.Recording;
+	recording.Path = settings.GetString("recordings_path", recording.Path);
+	recording.Schedule = settings.GetString("record_schedule", recording.Schedule);
+	recording.SegmentMinutes = (uint32)std::max(settings.GetInt("record_segment_minutes", recording.SegmentMinutes), 1);
+	recording.KeepDays = (uint32)std::max(settings.GetInt("record_keep_days", recording.KeepDays), 0);
+	recording.MaxGigabytes = (uint32)std::max(settings.GetInt("record_max_gb", recording.MaxGigabytes), 0);
+	{
+		std::string cameras = settings.GetString("record_cameras", "");
+		std::string current;
+		for (size_t i = 0; i <= cameras.size(); ++i)
+		{
+			if (i == cameras.size() || cameras[i] == ',' || cameras[i] == ';')
+			{
+				size_t begin = current.find_first_not_of(" ");
+				size_t end = current.find_last_not_of(" ");
+				if (begin != std::string::npos)
+				{
+					recording.Cameras.push_back(current.substr(begin, end - begin + 1));
+				}
+
+				current.clear();
+			}
+			else
+			{
+				current += cameras[i];
+			}
+		}
+	}
+
+	config.RecordDefaultMinutes = (uint32)std::max(settings.GetInt("record_default_minutes", config.RecordDefaultMinutes), 1);
+	config.RecordOnUnknownPerson = settings.GetBool("record_on_unknown_person", config.RecordOnUnknownPerson);
+	config.RecordEventMinutes = (uint32)std::max(settings.GetInt("record_event_minutes", config.RecordEventMinutes), 1);
+	config.ControlPort = (uint16)std::max(settings.GetInt("control_port", config.ControlPort), 0);
+
+	// The commands for a server, which is already running (see the control port). This program just sends the command and prints the answer.
+	std::string command;
+	if (settings.GetInt("record_now", 0) > 0)
+	{
+		command = "save " + std::to_string(settings.GetInt("record_now", 0)) + (settings.GetString("record_camera", "").empty() ? "" : " " + settings.GetString("record_camera", ""));
+	}
+	else if (settings.GetBool("control_status", false))
+	{
+		command = "status";
+	}
+	else if (settings.GetBool("control_stop", false))
+	{
+		command = "stop";
+	}
+
+	if (!command.empty())
+	{
+		int exit_code = SendControlCommand(config.ControlPort, command);
+		Core::Shutdown();
+		return exit_code;
+	}
 
 	EmailConfig &email = config.Email;
 	email.Enabled = settings.GetBool("email", email.Enabled);
@@ -182,6 +293,11 @@ int main(int argc, char *argv[])
 	{
 		s.StartFramePreviews();
 	}
+	g_Server = &s;
+	std::signal(SIGINT, OnStopSignal);
+	std::signal(SIGTERM, OnStopSignal);
+
+	s.StartRecording();
 	s.StartNotifications();
 	s.StartFaceAnalysis();
 	s.Run();

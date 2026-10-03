@@ -14,6 +14,51 @@ client_timeout_seconds = 15
 # Shows a live preview window for every connected camera.
 preview = true
 
+# ---- Recordings ------------------------------------------------------------------------------------------------------------------------------
+# The server keeps the last backup_minutes of every camera in memory. These minutes can be saved as a video file at any time (see README, section
+# Recordings): with the command CamServer --record_now=MINUTES, with the key R in a preview window, or automatically when an unknown person is seen.
+# On top of that, it can record continuously at fixed times (a schedule), for example every night.
+# The videos are AVI files (Motion JPEG), they play in VLC, Windows Media Player and most other players.
+
+# The folder for the videos (one sub folder per camera).
+recordings_path = recordings
+
+# The times, at which everything is recorded. Empty = no scheduled recording. Windows are separated by semicolons. A window is an optional list of days
+# (Mon, Tue, Wed, Thu, Fri, Sat, Sun, ranges like Mon-Fri, or lists like Mon,Wed,Fri; no days = every day) and a time range in the local time.
+# A time range, which ends before it starts, goes over midnight (and belongs to the day, on which it starts).
+# Examples:   22:00-06:00              every night
+#             Mon-Fri 08:00-18:00      working hours on weekdays
+#             Sat,Sun 00:00-23:59; Fri 18:00-23:59      all weekend
+record_schedule =
+
+# The cameras, which are recorded on schedule (names, separated by commas). Empty = all cameras.
+record_cameras =
+
+# A scheduled recording is split into files of this many minutes. A file is only playable when it is finished, so shorter files lose less, if the
+# power fails, a file is also finished when it reaches 1.5 GB, when a camera is silent for a minute, and when the server stops with Ctrl+C.
+record_segment_minutes = 10
+
+# Old videos are deleted: older than this many days (0 = keep forever), and when all videos together are larger than this many gigabytes (0 = no limit),
+# then the oldest ones go first. This protects the disk. Checked every 10 minutes.
+record_keep_days = 14
+record_max_gb = 20
+
+# How many minutes the key R (preview window) saves.
+record_default_minutes = 5
+
+# Saves the last minutes of a camera automatically, when it sees an unknown person (needs the face recognition). The video contains the minutes before
+# and until the event, so you see how the person came in.
+record_on_unknown_person = false
+record_event_minutes = 1
+
+# The control port. A program on the same computer (never from the network) can tell the running server what to do:
+#   CamServer --record_now=5                      saves the last 5 minutes of all cameras
+#   CamServer --record_now=5 --record_camera=Front   only of the camera "Front"
+#   CamServer --control_status                    shows the cameras, the buffers and the recording settings
+#   CamServer --control_stop                      stops the server properly (finishes the recordings)
+# 0 turns it off.
+control_port = 45650
+
 # ---- Face detection and recognition (off by default) ----------------------------------------------------------------------------------------
 # Finds the faces in the camera feeds, and recognizes known people. It needs two model files and photos of the known people, see README.md
 # ("Face detection and recognition"). Faces are marked in the preview windows, and reported in the log.

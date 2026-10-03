@@ -71,6 +71,16 @@ namespace Core
 		return (::bind(m_Socket, (struct sockaddr *)&si, sizeof(si)) == 0);
 	}
 	
+	bool WindowsSocket::BindLoopback(uint16 port)
+	{
+		struct sockaddr_in si = {};
+		si.sin_family = AF_INET;
+		si.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		si.sin_port = htons(port);
+
+		return (::bind(m_Socket, (struct sockaddr *)&si, sizeof(si)) == 0);
+	}
+
 	int32 WindowsSocket::Recv(void *dst, int32 dst_bytes, addr_t *addr)
 	{
 		assert(dst);

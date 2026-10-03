@@ -26,6 +26,11 @@ namespace Core
 
 		virtual bool Bind(uint16 port) = 0;
 
+		/// <summary>
+		/// Like Bind, but only reachable from the same computer (127.0.0.1). For control channels, which must not be reachable from the network.
+		/// </summary>
+		virtual bool BindLoopback(uint16 port) = 0;
+
 		/// Returns the number of bytes received, 0 if nothing is available on a non-blocking socket and -1 on a socket error.
 		virtual int32 Recv(void *dst, int32 dst_bytes, addr_t *addr) = 0;
 		virtual int32 Send(void const *src, int32 src_bytes, addr_t addr) = 0;

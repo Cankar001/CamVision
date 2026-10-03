@@ -18,7 +18,7 @@ Open work for CamVision. Items marked with a path point at the code where they b
 
 - [ ] **No authentication or encryption** between cameras, displays and the server: everybody in the network can connect a display and see all cameras (or send frames as a camera). Needs a shared secret or key per device, and encrypted frames, before the server is used outside a trusted home network.
 - [ ] Web interface.
-- [ ] Record the last X minutes on demand, and record at specific times. The ring buffer on the server already holds the frames of the last minutes, but nothing saves them to disk yet.
+- [ ] **Recordings, next steps** (saving the last minutes on demand and recording on schedule work, see README, section Recordings): a way to save from a display (a key on the display, so the people in the house can do it without a computer), a list and download of the recordings in the web interface, other video formats (MP4 in browsers), and finishing a file that was left unfinished by a crash (the AVI index is written at the end). The control port is not authenticated (it only listens on this computer).
 - [ ] Hardware section of the README ("coming soon").
 
 ## Cleanup and quality
