@@ -11,7 +11,10 @@ enum MessageType : uint16
 	SERVER_RECEIVE_VERSION,
 	SERVER_UPDATE_TOKEN,
 	SERVER_UPDATE_BEGIN,
-	SERVER_UPDATE_PIECE
+	SERVER_UPDATE_PIECE,
+
+	// The update was replaced on the server, while the client downloaded it. Added at the end, so old programs, which do not know it, ignore it.
+	SERVER_UPDATE_CHANGED
 };
 
 #define SIG_BYTES 512
@@ -87,6 +90,17 @@ struct ServerUpdatePieceMessage
 	uint64 ServerToken;
 	uint32 PiecePos;
 	uint16 PieceSize;
+};
+
+/// <summary>
+/// The server answers a request for a piece with this message, if the update, which the client began to download, is not the current one anymore (the server
+/// built a new one in the meantime). The pieces of the new update do not fit to the ones already received, so the client starts again with the new version.
+/// </summary>
+struct ServerUpdateChangedMessage
+{
+	header_t Header;
+	uint64 ClientToken;
+	uint64 ServerToken;
 };
 
 #pragma pack(pop)

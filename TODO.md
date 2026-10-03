@@ -8,10 +8,9 @@ Open work for CamVision. Items marked with a path point at the code where they b
 
 ## Updater
 
-- [ ] **Update replaced during a download.** A client, which is in the middle of a download when the server rebuilds its update, ends with a signature failure. It then keeps the installed CamClient and retries on its next start. A clean handover needs a protocol change (for example an update ID in the messages).
 - [ ] **No replay or downgrade protection.** The signature covers only the update file, not the version number, so somebody who can spoof the UDP packets of the server could offer an old signed update under a higher version. Fix by signing the version together with the file (protocol change).
 - [ ] **Key rotation is manual.** After a lost or leaked signing key, use `regenerate_keys = true` and delete the pinned public key on every client. There is no secure way to hand clients a new key.
-- [ ] **Stopping the CamClient before an update** works on Windows (tested with a stand-in program: it quits on Ctrl+C, no force needed). Not compiled or run on Linux yet (`LinuxProcess.cpp`, SIGTERM then SIGKILL). A CamClient without a console (started as a service) cannot receive Ctrl+C on Windows and is killed after the timeout, so it has no chance to say goodbye to the server.
+- [ ] **Stopping the CamClient before an update** A CamClient without a console (started as a service) cannot receive Ctrl+C on Windows and is killed after the timeout, so it has no chance to say goodbye to the server.
 - [ ] **Pinned key on real devices.** The first update is trusted blindly, unless the public key of the server is copied to the device in advance (see README, section Updater). Make that part of the device setup.
 - [ ] Very long file copies, which pause for more than 3 seconds, can still trigger an extra rebuild of the update in the hot reload.
 

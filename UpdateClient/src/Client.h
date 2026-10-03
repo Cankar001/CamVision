@@ -122,6 +122,11 @@ private:
 	void LoadPinnedKey();
 
 	/// <summary>
+	/// The server replaced the update, while it was downloaded: forgets what was received and asks for the version again, so the new update is downloaded.
+	/// </summary>
+	void RestartDownload();
+
+	/// <summary>
 	/// Extracts update.zip into the install path and remembers the new version.
 	/// </summary>
 	bool InstallUpdate();
@@ -155,6 +160,9 @@ private:
 	// A piece, which was requested, is not requested again for this time, its answer is probably on its way (otherwise every piece is received many times).
 	static constexpr int64 PIECE_RETRY_MS = 1000;
 
+	// How often the download starts again, if the server replaces the update. A server, which rebuilds all the time, does not keep the client busy forever.
+	static constexpr uint32 MAX_UPDATE_RESTARTS = 5;
+
 	ClientConfig m_Config;
 	Core::Socket *m_Socket = nullptr;
 	Core::Crypto *m_Crypto = nullptr;
@@ -182,6 +190,9 @@ private:
 	bool m_IsUpdating = false;
 	uint32 m_UpdateIdx = 0;
 	uint32 m_CurrentRecvAttempt = 0;
+
+	// How often the download started again, because the server replaced the update (see SERVER_UPDATE_CHANGED).
+	uint32 m_UpdateRestarts = 0;
 	Signature m_UpdateSignature;
 };
 

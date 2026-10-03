@@ -18,6 +18,9 @@ namespace Core
 			Node *Next;
 			addr_t Addr;
 			uint64 ServerToken;
+
+			// Identifies the update, which the client began to download (0: none). Tells, if the update was replaced during the download.
+			uint64 UpdateId;
 			int64 TimeMS;
 			uint32 Bandwidth;
 

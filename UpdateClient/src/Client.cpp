@@ -554,7 +554,7 @@ void Client::MessageLoop()
 		{
 			if (!m_IsUpdating)
 			{
-				CAM_LOG_ERROR("Invalid state! The update is not in progress.");
+				// Pieces, which were still on their way, when the download was restarted or finished.
 				continue;
 			}
 
@@ -630,6 +630,31 @@ void Client::MessageLoop()
 			{
 				--m_InFlight;
 			}
+		}
+		else if (header->Type == MessageType::SERVER_UPDATE_CHANGED)
+		{
+			if (len != sizeof(ServerUpdateChangedMessage))
+			{
+				CAM_LOG_ERROR("The update changed message has the size {0}, but {1} was expected!", len, sizeof(ServerUpdateChangedMessage));
+				continue;
+			}
+
+			ServerUpdateChangedMessage *msg = (ServerUpdateChangedMessage *)BUF;
+			if (!m_IsUpdating || msg->ClientToken != m_ClientToken || msg->ServerToken != m_ServerToken)
+			{
+				// For example a second message, the first one already restarted the download.
+				continue;
+			}
+
+			if (m_UpdateRestarts >= MAX_UPDATE_RESTARTS)
+			{
+				CAM_LOG_WARN("The update was replaced on the server again, but the download was restarted {} times already. Not restarting.", m_UpdateRestarts);
+				continue;
+			}
+
+			++m_UpdateRestarts;
+			CAM_LOG_WARN("The update was replaced on the server during the download. Starting again with the new update ({0} of {1})...", m_UpdateRestarts, MAX_UPDATE_RESTARTS);
+			RestartDownload();
 		}
 		else if (header->Type == MessageType::SERVER_UPDATE_TOKEN)
 		{
@@ -726,6 +751,13 @@ void Client::LoadPinnedKey()
 	}
 
 	delete[] data;
+}
+
+void Client::RestartDownload()
+{
+	// What was received belongs to the old update. The new one may also have another version (and key), so the version is asked for again.
+	Reset();
+	RequestServerVersion();
 }
 
 void Client::Reset()

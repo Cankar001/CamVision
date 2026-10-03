@@ -481,12 +481,19 @@ bool Server::LoadUpdateFile(bool regenerateKeys, bool skipDebugFiles)
 
 	// Everything worked, now the new update replaces the old one. This is the only moment, where the network thread has to wait.
 	uint32 new_size = new_update_file.Size;
+	uint64 new_update_id = Core::Raw64(new_update_file.Data, new_update_file.Size);
+	if (new_update_id == 0)
+	{
+		new_update_id = 1;
+	}
+
 	{
 		std::lock_guard<std::mutex> lock(m_UpdateMutex);
 
 		std::swap(m_UpdateFile.Data, new_update_file.Data);
 		std::swap(m_UpdateFile.Size, new_update_file.Size);
 		m_UpdateSignature = new_signature;
+		m_UpdateId = new_update_id;
 		m_PublicKey = public_key;
 		m_LocalVersion = version;
 	}
@@ -662,6 +669,9 @@ bool Server::Step()
 		res.UpdateSignature = m_UpdateSignature;
 		m_Socket->Send(&res, sizeof(res), addr);
 
+		// From now on, the client downloads this update.
+		client->UpdateId = m_UpdateId;
+
 		client->Bandwidth += sizeof(ServerUpdateBeginMessage);
 	}
 	else if (header->Type == MessageType::CLIENT_UPDATE_PIECE)
@@ -674,12 +684,6 @@ bool Server::Step()
 		int64 now_ms = Core::QueryMS();
 
 		ClientUpdatePieceMessage *msg = (ClientUpdatePieceMessage *)BUF;
-
-		if (msg->PiecePos >= m_UpdateFile.Size)
-		{
-			CAM_LOG_ERROR("The request position was larger than the file!");
-			return true;
-		}
 
 		Core::Clients::Node *client = m_Clients->Insert(addr, now_ms);
 
@@ -698,6 +702,30 @@ bool Server::Step()
 		if (msg->ServerToken != client->ServerToken)
 		{
 			CAM_LOG_ERROR("Server tokens did not match!");
+			return true;
+		}
+
+		if (client->UpdateId != m_UpdateId)
+		{
+			// The update was replaced, while the client downloaded it. The pieces of the new one do not fit to the received ones, the client has to start again.
+			// Pieces, which were sent before, are still fine for the client. Every request is answered like this, until the client began again (with a begin
+			// message), so pieces of the two updates are never mixed, even if this message gets lost.
+			CAM_LOG_DEBUG("The client asks for a piece of an update, which is not the current one anymore.");
+
+			ServerUpdateChangedMessage changed = {};
+			changed.Header.Type = MessageType::SERVER_UPDATE_CHANGED;
+			changed.Header.Version = m_LocalVersion;
+			changed.ClientToken = msg->ClientToken;
+			changed.ServerToken = client->ServerToken;
+			m_Socket->Send(&changed, sizeof(changed), addr);
+			client->Bandwidth += sizeof(changed);
+
+			return true;
+		}
+
+		if (msg->PiecePos >= m_UpdateFile.Size)
+		{
+			CAM_LOG_ERROR("The request position was larger than the file!");
 			return true;
 		}
 

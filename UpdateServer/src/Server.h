@@ -138,5 +138,8 @@ private:
 	uint32 m_LocalVersion = 0;
 	Signature m_UpdateSignature;
 	Core::FileSystemBuffer m_UpdateFile;
+
+	// Identifies the content of the current update (never 0). A client, which began to download another update, is told to start again.
+	uint64 m_UpdateId = 0;
 };
 
