@@ -43,6 +43,10 @@ workspace "CamVision"
 		include "CamDisplay"
 	group ""
 
+	group "Tests"
+		include "CamTests"
+	group ""
+
 	group "Updater"
 		include "UpdateClient"
 		include "UpdateServer"

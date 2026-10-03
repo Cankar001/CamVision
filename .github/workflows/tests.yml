@@ -1,0 +1,72 @@
+name: Tests
+
+# Builds the tests (CamTests) and runs them on Windows and Linux, in Debug and Release.
+# The tests only need Cam-Core, Miniz and spdlog, so no OpenCV and no large files (git lfs) are needed.
+# Run the same on your machine:  Setup.py, then build the project CamTests and start CamTests (see README, section Tests).
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows (${{ matrix.configuration }})
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [ Debug, Release ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate the Visual Studio solution
+        shell: pwsh
+        run: ./vendor/bin/premake/Windows/premake5.exe vs2022
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Build CamTests
+        shell: pwsh
+        run: msbuild CamVision.sln "/t:Tests\CamTests" /p:Configuration=${{ matrix.configuration }} /p:Platform=x64 /m /v:minimal /nologo
+
+      - name: Run the tests
+        shell: pwsh
+        working-directory: CamTests/bin/${{ matrix.configuration }}-windows-x86_64/CamTests
+        run: ./CamTests.exe
+
+  linux:
+    name: Linux (${{ matrix.configuration }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [ debug, release ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev
+
+      - name: Generate the makefiles
+        run: |
+          chmod +x vendor/bin/premake/Linux/premake5
+          ./vendor/bin/premake/Linux/premake5 gmake
+
+      - name: Build CamTests
+        run: make CamTests config=${{ matrix.configuration }} -j"$(nproc)"
+
+      - name: Run the tests
+        working-directory: CamTests/bin/${{ matrix.configuration == 'debug' && 'Debug' || 'Release' }}-linux/CamTests
+        run: ./CamTests

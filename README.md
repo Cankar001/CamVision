@@ -250,6 +250,18 @@ The signing keys are created once by the update server (`public_key_path` and `p
 
 The settings are explained in [UpdateServer/update_server.cfg.example](UpdateServer/update_server.cfg.example) and [UpdateClient/update_client.cfg.example](UpdateClient/update_client.cfg.example). The update server reads `update_server.cfg` and the update client `update_client.cfg` from the folder, in which they are started (the `UpdateServer` / `UpdateClient` project folder, if started from a build folder, like the other programs).
 
+# Tests
+
+The tests are in the project `CamTests`, a console program, which runs all tests and returns a value other than 0 if one fails. They cover the shared code (`Cam-Core`: settings, files, signatures and keys, sockets, zip files, the process handling), the message layout of the protocol, and the parts of the server, which record videos (schedule and AVI files). They need neither a camera nor OpenCV.
+
+- **Windows:** run `Setup.py`, open `CamVision.sln`, build the project `CamTests` and run it (or run `CamTests.exe` from the output folder). From a console: `msbuild CamVision.sln "/t:Tests\CamTests" /p:Configuration=Debug /p:Platform=x64`.
+- **Linux:** `python3 Setup.py`, then `make CamTests config=debug -j4` and run `CamTests/bin/Debug-linux/CamTests/CamTests`.
+- `CamTests Config` runs only the tests, whose name contains "Config" (several words can be given), `CamTests --list` lists all tests.
+
+New tests are added with `TEST(Suite, Name) { ... }` in a file in `CamTests/src` (it is picked up on the next premake run), with `CHECK(...)` and `CHECK_EQ(a, b)`, which report a failure and go on, and `REQUIRE(...)`, which also ends the test. A test, which needs files, uses `TempDir` (a folder, which is deleted again).
+
+The tests run on every push and pull request in GitHub Actions on Windows and Linux, in Debug and Release (`.github/workflows/tests.yml`).
+
 # Features
 
 The project currently supports these features:

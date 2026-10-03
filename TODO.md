@@ -25,4 +25,4 @@ Open work for CamVision. Items marked with a path point at the code where they b
 ## Cleanup and quality
 
 - [ ] Camera error handling in `CamClient/src/Camera.cpp`: `GenerateFrames` has static retry counters, which are never reset, and `Zoom()` probably builds a wrong rectangle (it passes the maximum coordinates, where width and height are expected).
-- [ ] No automated tests and no CI.
+- [ ] **Tests (CamTests), what is still missing.** The first tests cover Cam-Core, the protocol, the recorder and the process handling (see README, section Tests). Not covered yet, in the order of value: the update flow (UpdateServer and UpdateClient together on loopback: download, signature, pinned key, hot reload, stopping the CamClient), the server with a fake camera and a fake display (connect, frames, heartbeat, timeout), the mailer against a fake SMTP server, the notifier batching, and the face recognition with a test picture. The updater and the server are programs, so they first need to be split into a library and a thin `main`, to be testable without starting them. The CI builds and tests CamTests only, not the programs themselves (they need OpenCV, which is large).
