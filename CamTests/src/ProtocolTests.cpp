@@ -2,6 +2,8 @@
 
 #include "Net/CamMessages.h"
 
+#include <cstring>
+
 // The messages are the contract between programs of different versions on different machines (a Raspberry Pi and a PC), so the layout is pinned here.
 // If one of these fails, the protocol changed: change CAM_PROTOCOL_VERSION too, and update the numbers here on purpose.
 
