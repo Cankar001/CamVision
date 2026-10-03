@@ -21,10 +21,12 @@ namespace
 	{
 	public:
 
-		Sleeper()
+		// without_console: started without a console (like a service), where Ctrl+C does not exist.
+		Sleeper(const char *name = SLEEPER_NAME, bool without_console = false)
+			: m_WithoutConsole(without_console)
 		{
 			std::string extension = std::filesystem::path(TestProgramPath()).extension().string();
-			m_File = m_Dir.File(std::string(SLEEPER_NAME) + extension);
+			m_File = m_Dir.File(std::string(name) + extension);
 			std::filesystem::copy_file(TestProgramPath(), m_File);
 		}
 
@@ -44,7 +46,8 @@ namespace
 			startup.cb = sizeof(startup);
 			PROCESS_INFORMATION process = {};
 			std::string command = "\"" + m_File + "\"";
-			if (!CreateProcessA(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup, &process))
+			DWORD flags = m_WithoutConsole ? DETACHED_PROCESS : CREATE_NEW_CONSOLE;
+			if (!CreateProcessA(nullptr, command.data(), nullptr, nullptr, FALSE, flags, nullptr, nullptr, &startup, &process))
 			{
 				return false;
 			}
@@ -82,6 +85,7 @@ namespace
 
 		TempDir m_Dir;
 		std::string m_File;
+		bool m_WithoutConsole;
 	};
 }
 
@@ -166,4 +170,36 @@ TEST(Process, OtherProgramsStayUntouched)
 
 	REQUIRE(Core::Process::Stop(first_pids[0], 5));
 	CHECK(Core::Process::IsRunning(second_pids[0]));
+}
+
+TEST(Process, AProgramWithoutAConsoleIsAskedToQuitWithItsStopRequest)
+{
+	// Like the CamClient as a service: no console, so no Ctrl+C. It registered a stop request and quits cleanly, when it is asked (and is not killed after
+	// the grace time).
+	Sleeper listener(LISTENER_NAME, true);
+	REQUIRE(listener.Start());
+
+	std::vector<uint32> pids = listener.WaitForStart();
+	REQUIRE_EQ(pids.size(), (size_t)1);
+
+	auto start = std::chrono::steady_clock::now();
+	CHECK(Core::Process::Stop(pids[0], 20));
+	auto seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count();
+	CHECK(!Core::Process::IsRunning(pids[0]));
+
+	// Quitting on its own takes a moment, the grace time of 20 seconds is never used up.
+	CHECK(seconds < 10);
+}
+
+TEST(Process, AProgramWithAConsoleAlsoQuitsWithItsStopRequest)
+{
+	Sleeper listener(LISTENER_NAME, false);
+	REQUIRE(listener.Start());
+
+	std::vector<uint32> pids = listener.WaitForStart();
+	REQUIRE_EQ(pids.size(), (size_t)1);
+
+	auto start = std::chrono::steady_clock::now();
+	CHECK(Core::Process::Stop(pids[0], 20));
+	CHECK(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start).count() < 10);
 }

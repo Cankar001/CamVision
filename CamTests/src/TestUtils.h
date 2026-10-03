@@ -42,3 +42,6 @@ std::string TestProgramPath();
 
 // The name, which the test program has, when it is started as a stand-in for another program: it only waits.
 constexpr const char *SLEEPER_NAME = "camtests_sleeper";
+
+// The same, but it registers a stop request (Core::Process::StartStopListener) and quits cleanly, when it is asked to. This is how the CamClient behaves.
+constexpr const char *LISTENER_NAME = "camtests_listener";

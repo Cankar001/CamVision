@@ -113,6 +113,13 @@ namespace Core
 		return !IsRunning(pid);
 	}
 
+	bool Process::StartStopListener(std::function<void()> onStop)
+	{
+		// Not needed on Linux, the program gets SIGTERM.
+		(void)onStop;
+		return true;
+	}
+
 	bool Process::HandleHelperCommand(int argc, char *argv[])
 	{
 		// Not needed on Linux, SIGTERM can be sent directly.

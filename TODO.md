@@ -9,7 +9,7 @@ Open work for CamVision. Items marked with a path point at the code where they b
 ## Updater
 
 - [ ] **Key rotation is manual.** After a lost or leaked signing key, use `regenerate_keys = true` and delete the pinned public key on every client. There is no secure way to hand clients a new key.
-- [ ] **Stopping the CamClient before an update** A CamClient without a console (started as a service) cannot receive Ctrl+C on Windows and is killed after the timeout, so it has no chance to say goodbye to the server.
+- [ ] **Stopping the CamClient before an update** is only tested on Windows. The Linux code (`LinuxProcess.cpp`, SIGTERM then SIGKILL) is run by the CI tests, but not with the real update client. A CamClient, which runs as a Windows service under another account than the update client, may not be allowed to receive the stop request (the event is created with the default access rights), it is killed after the timeout then.
 - [ ] **Pinned key on real devices.** The first update is trusted blindly, unless the public key of the server is copied to the device in advance (see README, section Updater). Make that part of the device setup.
 - [ ] Very long file copies, which pause for more than 3 seconds, can still trigger an extra rebuild of the update in the hot reload.
 

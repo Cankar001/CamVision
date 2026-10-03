@@ -1,3 +1,4 @@
+#include <atomic>
 #include <csignal>
 #include <iostream>
 
@@ -18,14 +19,20 @@ int main(int argc, char *argv[])
 }
 #endif
 
-static Client *g_Client = nullptr;
+static std::atomic<Client *> g_Client{ nullptr };
+
+// A request to stop, which came before the client existed (while it opens the camera, for example). It is carried out as soon as the client is there.
+static std::atomic<bool> g_StopRequested{ false };
 
 // Lets Ctrl+C or a service stop shut down cleanly (the server gets a proper disconnect).
 static void OnStopSignal(int)
 {
-	if (g_Client)
+	g_StopRequested = true;
+
+	Client *client = g_Client;
+	if (client)
 	{
-		g_Client->Stop();
+		client->Stop();
 	}
 }
 
@@ -35,6 +42,13 @@ int main(int argc, char *argv[])
 
 	// Settings come from client.cfg (in the working directory, or --config=path) and can be overridden with --key=value arguments.
 	Core::Config settings(argc, argv, "client.cfg");
+
+	// Ctrl+C and SIGTERM shut the client down cleanly. The update client also stops the CamClient before an update is installed, with a stop request, which
+	// on Windows works without a console too (a service, a program without a window), where Ctrl+C does not exist. This is set up first, so a CamClient,
+	// which is still starting, can be stopped too.
+	std::signal(SIGINT, OnStopSignal);
+	std::signal(SIGTERM, OnStopSignal);
+	Core::Process::StartStopListener([] { OnStopSignal(0); });
 
 	ClientConfig config;
 	config.ServerIP = settings.GetString("server_ip", config.ServerIP);
@@ -77,8 +91,10 @@ int main(int argc, char *argv[])
 	Client c(config);
 
 	g_Client = &c;
-	std::signal(SIGINT, OnStopSignal);
-	std::signal(SIGTERM, OnStopSignal);
+	if (g_StopRequested)
+	{
+		c.Stop();
+	}
 
 	// start all worker threads
 	c.Run(!headless);

@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <thread>
 
 namespace Core
 {
@@ -37,6 +38,13 @@ namespace Core
 		BOOL WINAPI SwallowCtrlC(DWORD type)
 		{
 			return type == CTRL_C_EVENT;
+		}
+
+		// The event, with which a program is asked to quit. One per process, in the global namespace, so a program in another session (a service) is found
+		// too.
+		std::wstring StopEventName(uint32 pid)
+		{
+			return L"Global\\CamVision.Stop." + std::to_wstring(pid);
 		}
 	}
 
@@ -106,10 +114,19 @@ namespace Core
 			return !IsRunning(pid);
 		}
 
-		// Ask politely: a helper (this program again) sends Ctrl+C to the console of the other program.
+		// Ask politely. A program, which registered a stop request (StartStopListener), is asked with it, which works without a console too.
+		bool asked = false;
+		HANDLE stop_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, StopEventName(pid).c_str());
+		if (stop_event)
+		{
+			asked = SetEvent(stop_event) != FALSE;
+			CloseHandle(stop_event);
+		}
+
+		// Otherwise a helper (this program again) sends Ctrl+C to the console of the other program.
 		SetConsoleCtrlHandler(SwallowCtrlC, TRUE);
 		char self[MAX_PATH * 2];
-		if (GetModuleFileNameA(nullptr, self, (DWORD)sizeof(self)) > 0)
+		if (!asked && GetModuleFileNameA(nullptr, self, (DWORD)sizeof(self)) > 0)
 		{
 			std::string command = "\"" + std::string(self) + "\" " + HELPER_ARGUMENT + std::to_string(pid);
 			std::vector<char> mutable_command(command.begin(), command.end());
@@ -137,6 +154,33 @@ namespace Core
 		SetConsoleCtrlHandler(SwallowCtrlC, FALSE);
 		CloseHandle(process);
 		return gone;
+	}
+
+	bool Process::StartStopListener(std::function<void()> onStop)
+	{
+		static HANDLE s_Event = nullptr;
+		if (s_Event)
+		{
+			return true;
+		}
+
+		// A manual reset event, which is set once and stays set: the request is not lost, if it comes before the thread waits.
+		s_Event = CreateEventW(nullptr, TRUE, FALSE, StopEventName(GetCurrentProcessId()).c_str());
+		if (!s_Event)
+		{
+			return false;
+		}
+
+		HANDLE stop_event = s_Event;
+		std::thread([stop_event, onStop]
+		{
+			if (WaitForSingleObject(stop_event, INFINITE) == WAIT_OBJECT_0 && onStop)
+			{
+				onStop();
+			}
+		}).detach();
+
+		return true;
 	}
 
 	bool Process::HandleHelperCommand(int argc, char *argv[])

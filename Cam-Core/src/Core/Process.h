@@ -2,6 +2,7 @@
 
 #include "Core.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -26,12 +27,22 @@ namespace Core
 		static bool IsRunning(uint32 pid);
 
 		/// <summary>
-		/// Ends a program: first it is asked to quit (SIGTERM on Linux, Ctrl+C on Windows), so it can finish properly (close connections, finish files).
-		/// If it is still there after the grace time, it is killed.
+		/// Ends a program: first it is asked to quit, so it can finish properly (close connections, finish files). If it is still there after the grace
+		/// time, it is killed. On Linux it is asked with SIGTERM. On Windows with the stop request of the program, if it registered one
+		/// (StartStopListener), which also works for a program without a console (a service, or a program started without a window), and with Ctrl+C
+		/// otherwise (which needs a console).
 		/// </summary>
 		/// <param name="graceSeconds">How long the program has to quit on its own.</param>
 		/// <returns>Returns true, if the program is gone.</returns>
 		static bool Stop(uint32 pid, uint32 graceSeconds);
+
+		/// <summary>
+		/// Lets other programs ask this program to quit with Process::Stop(), without Ctrl+C or a console. On Windows this creates a named event for this
+		/// process and waits for it on its own thread, the callback is called on that thread (like a signal handler, it should only tell the program to
+		/// stop, and return). Call it once, at the start. Does nothing on Linux (returns true), where SIGTERM is used.
+		/// </summary>
+		/// <returns>Returns true, if the program can be asked now.</returns>
+		static bool StartStopListener(std::function<void()> onStop);
 
 		/// <summary>
 		/// On Windows, a program cannot send Ctrl+C to another program without losing its own console. So Stop() starts this program again with a secret

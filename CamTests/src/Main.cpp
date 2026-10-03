@@ -1,6 +1,7 @@
 #include "CamTest.h"
 #include "TestUtils.h"
 
+#include <atomic>
 #include <chrono>
 #include <thread>
 
@@ -38,9 +39,22 @@ int main(int argc, char *argv[])
 
 	// Tests of the process handling start a copy of this program as a stand-in for a running program (the file name is the trigger,
 	// because the program is started without arguments). It does nothing but wait, until it is stopped.
-	if (std::filesystem::path(TestProgramPath()).stem().string() == SLEEPER_NAME)
+	std::string stem = std::filesystem::path(TestProgramPath()).stem().string();
+	if (stem == SLEEPER_NAME)
 	{
 		std::this_thread::sleep_for(std::chrono::minutes(2));
+		return 0;
+	}
+
+	if (stem == LISTENER_NAME)
+	{
+		std::atomic<bool> stop{ false };
+		Core::Process::StartStopListener([&stop] { stop = true; });
+		for (int i = 0; i < 1200 && !stop; ++i)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		}
+
 		return 0;
 	}
 
