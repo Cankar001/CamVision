@@ -5,7 +5,7 @@
 port = 44200
 
 # Folder of the CamClient source. Its src/CamVersion.h tells the version, which is announced to the clients.
-# Clients update, when this version differs from their installed version: increase CAM_VERSION when you ship a new build.
+# Clients update to a higher version than their installed one: increase CAM_VERSION when you ship a new build.
 source_path = ../CamClient
 
 # Folder with the binaries, which are shipped to the clients (all files in it, without sub folders and *.pdb files).
@@ -21,7 +21,8 @@ public_key_path = ../CamClient/public_key.key
 private_key_path = ../CamClient/private_key.key
 signature_path = ../CamClient/signature.sig
 
-# The version, which is announced to the clients. Clients update, when it differs from their installed version.
+# The version, which is announced to the clients. Clients only update to a higher version than their installed one, and never go back to an older
+# version: to roll back, publish the old binaries under a higher version. The version is part of the signature of the update.
 # 0 = read it, in this order, from a version.txt in the binary folder (a single number, it travels together with the binaries), or from
 # CAM_VERSION in CamVersion.h in source_path. Any other number overrides both.
 version = 0

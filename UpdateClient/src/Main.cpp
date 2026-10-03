@@ -18,7 +18,7 @@
 /// With --query-version, the client only asks the update server for its version, prints it (just the number, nothing else) and quits, without
 /// downloading, installing or starting anything. Exit code 0: the version was printed. Exit code 1: the server did not answer (nothing is printed
 /// to stdout, the reason goes to stderr). If the server has no update to offer, the own version is printed, so "printed version differs from my
-/// version" tells a program (like the camera client), that an update is available. --query-timeout=SECONDS changes how long to wait (default 5).
+/// version" tells a program (like the camera client), that a newer update is available (the server answers with the own version, if its update is not newer). --query-timeout=SECONDS changes how long to wait (default 5).
 /// </summary>
 /// <param name="argc"></param>
 /// <param name="argv"></param>

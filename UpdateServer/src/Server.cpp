@@ -444,12 +444,14 @@ bool Server::LoadUpdateFile(bool regenerateKeys, bool skipDebugFiles)
 	}
 
 	// make the signature for the file
+	// The signature covers the version too, so an old update cannot be offered under a newer version.
+	std::vector<Byte> signed_data = Core::utils::BuildSignedUpdateData(version, new_update_file.Data, new_update_file.Size);
 	Signature new_signature = {};
 	if (!m_Crypto->SignSignature(
 		new_signature.Data,
 		sizeof(new_signature.Data),
-		new_update_file.Data,
-		new_update_file.Size,
+		signed_data.data(),
+		(uint32)signed_data.size(),
 		private_key.Data,
 		private_key.Size))
 	{
@@ -764,8 +766,9 @@ bool Server::Step()
 		ServerVersionInfoMessage res = {};
 		res.Header.Type = MessageType::SERVER_RECEIVE_VERSION;
 		res.Header.Version = m_LocalVersion;
-		// Without an update there is nothing to offer, so the client is told, that it is up to date.
-		res.Version = m_UpdateFile.Size != 0 ? m_LocalVersion : client_version;
+		// Without an update there is nothing to offer, so the client is told, that it is up to date. The same if the update is not newer than the one of the
+		// client: updates are never offered as a downgrade (clients refuse them anyway). To roll back, publish the old binaries under a higher version.
+		res.Version = (m_UpdateFile.Size != 0 && m_LocalVersion > client_version) ? m_LocalVersion : client_version;
 		res.PublicKey.Size = m_PublicKey.Size;
 		memcpy(res.PublicKey.Data, m_PublicKey.Data, m_PublicKey.Size);
 		m_Socket->Send(&res, sizeof(res), addr);

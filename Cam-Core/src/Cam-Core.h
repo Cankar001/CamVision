@@ -16,4 +16,5 @@
 #include "Net/Net.h"
 
 #include "Utils/Utils.h"
+#include "Utils/UpdateSignature.h"
 

@@ -463,7 +463,14 @@ void Client::MessageLoop()
 
 			ServerVersionInfoMessage *msg = (ServerVersionInfoMessage *)BUF;
 			CAM_LOG_DEBUG("Received new server version: {}", msg->Version);
-			if (msg->Version != m_LocalVersion)
+			if (msg->Version < m_LocalVersion)
+			{
+				// Never go back to an older version: somebody could offer an old update, which has a known bug. To roll back, publish the old binaries
+				// under a higher version.
+				m_Status.Code = ClientStatusCode::UP_TO_DATE;
+				CAM_LOG_WARN("The server offers the older version {0}, the installed version is {1}. Not downgrading.", msg->Version, m_LocalVersion);
+			}
+			else if (msg->Version != m_LocalVersion)
 			{
 				// Servers of older versions send the key with garbage behind it, so it is compared in its normalized form.
 				Core::Crypto::key_t received_key = msg->PublicKey;
@@ -814,7 +821,9 @@ void Client::UpdateProgress(int64 now_ms, Core::addr_t addr)
 
 	if (m_UpdateIdx >= m_UpdatePieces.Size)
 	{
-		if (m_Crypto->TestSignature(m_UpdateSignature.Data, SIG_BYTES, m_UpdateData.Ptr, m_UpdateData.Size, m_Config.PublicKey.Data, m_Config.PublicKey.Size))
+		// The signature covers the version the server announced, so an old update cannot be installed as a newer version.
+		std::vector<Byte> signed_data = Core::utils::BuildSignedUpdateData(m_ClientVersion, m_UpdateData.Ptr, m_UpdateData.Size);
+		if (m_Crypto->TestSignature(m_UpdateSignature.Data, SIG_BYTES, signed_data.data(), (uint32)signed_data.size(), m_Config.PublicKey.Data, m_Config.PublicKey.Size))
 		{
 			if (!m_KeyPinned)
 			{
@@ -857,7 +866,8 @@ void Client::UpdateProgress(int64 now_ms, Core::addr_t addr)
 		else
 		{
 			m_Status.Code = ClientStatusCode::BAD_SIG;
-			CAM_LOG_ERROR("The signature of the update does not match the {} public key.", m_KeyPinned ? "pinned" : "server's");
+			CAM_LOG_ERROR("The signature of the update (version {0}) does not match the {1} public key.", m_ClientVersion, m_KeyPinned ? "pinned" : "server's");
+			CAM_LOG_ERROR("(An update server of an older version signs the file without its version, which is not accepted anymore: update the server.)");
 			if (m_KeyPinned)
 			{
 				CAM_LOG_ERROR("If the key of the update server was changed on purpose, delete {} on this client to trust the new key.", m_Config.PublicKeyPath);
