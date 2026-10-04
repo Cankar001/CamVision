@@ -224,6 +224,28 @@ int main(int argc, char *argv[])
 	config.RecordOnUnknownPerson = settings.GetBool("record_on_unknown_person", config.RecordOnUnknownPerson);
 	config.RecordEventMinutes = (uint32)std::max(settings.GetInt("record_event_minutes", config.RecordEventMinutes), 1);
 	config.ControlPort = (uint16)std::max(settings.GetInt("control_port", config.ControlPort), 0);
+	config.WebSocketPort = (uint16)std::max(settings.GetInt("websocket_port", config.WebSocketPort), 0);
+	config.WebSocketBind = settings.GetString("websocket_bind", config.WebSocketBind);
+	config.WebSocketToken = settings.GetString("websocket_token", config.WebSocketToken);
+	config.WebSocketTokenFile = settings.GetString("websocket_token_file", config.WebSocketTokenFile);
+
+	// --show_websocket_token: prints the secret of the remote control (it is made, if there is none yet) and quits.
+	if (settings.GetBool("show_websocket_token", false))
+	{
+		std::string token_error;
+		std::string token = LoadOrCreateWebSocketToken(config, &token_error);
+		if (token.empty())
+		{
+			std::cerr << "Could not get the token: " << token_error << std::endl;
+			Core::Shutdown();
+			return 1;
+		}
+
+		std::cout << token << std::endl;
+		Core::Shutdown();
+		return 0;
+	}
+
 	config.RequireAuth = settings.GetBool("auth", config.RequireAuth);
 	config.DevicesFile = settings.GetString("devices_file", config.DevicesFile);
 
@@ -383,6 +405,7 @@ int main(int argc, char *argv[])
 	s.StartRecording();
 	s.StartNotifications();
 	s.StartFaceAnalysis();
+	s.StartRemoteControl();
 	s.Run();
 
 	Core::Shutdown();

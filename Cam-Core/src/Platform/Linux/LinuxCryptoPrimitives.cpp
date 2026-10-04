@@ -32,6 +32,11 @@ namespace Core::crypto
 		SHA256((const unsigned char *)data, bytes, out);
 	}
 
+	void Sha1(const void *data, uint32 bytes, Byte out[SHA1_BYTES])
+	{
+		SHA1((const unsigned char *)data, bytes, out);
+	}
+
 	void HmacSha256(const void *key, uint32 keyBytes, const void *data, uint32 bytes, Byte out[SHA256_BYTES])
 	{
 		unsigned int length = SHA256_BYTES;

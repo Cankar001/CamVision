@@ -89,7 +89,29 @@ struct ServerConfig
 	/// The file with the devices and their keys (see Core::DeviceRegistry, and CamServer --add_device).
 	/// </summary>
 	std::string DevicesFile = "devices.cfg";
+
+	/// <summary>
+	/// The port of the remote control (a WebSocket, see StartRemoteControl). 0 turns it off.
+	/// </summary>
+	uint16 WebSocketPort = 45651;
+
+	/// <summary>
+	/// The address, on which the remote control listens: "127.0.0.1" only takes connections from this computer, "0.0.0.0" from the whole network.
+	/// </summary>
+	std::string WebSocketBind = "127.0.0.1";
+
+	/// <summary>
+	/// The secret, which a client has to send to log in. Empty takes the one from WebSocketTokenFile (made on the first start).
+	/// </summary>
+	std::string WebSocketToken;
+	std::string WebSocketTokenFile = "websocket_token.txt";
 };
+
+/// <summary>
+/// The secret of the remote control: the one of the settings, or the one in the token file. If there is none, a new one is made and stored in the file.
+/// Returns an empty text, if that did not work (the error says why).
+/// </summary>
+std::string LoadOrCreateWebSocketToken(const ServerConfig &config, std::string *error);
 
 /// <summary>
 /// An encoded (JPEG) frame. Shared, so the ring buffer, the preview and the frame assembly never copy the pixel data.
@@ -228,6 +250,46 @@ public:
 	/// <returns>A text for the user: the files, or what went wrong.</returns>
 	std::string SaveLastMinutes(uint32 minutes, const std::string &cameraFilter, const std::string &label, uint32 *savedFiles);
 
+	/// <summary>
+	/// One saved video of a camera (or the reason, why it could not be saved).
+	/// </summary>
+	struct SavedClip
+	{
+		std::string Camera;
+		std::string Path;
+		std::string Error;
+		uint32 Frames = 0;
+		bool Ok = false;
+	};
+
+	struct SaveReport
+	{
+		std::vector<SavedClip> Clips;
+
+		/// <summary>
+		/// Something the user should know (for example that fewer minutes were saved than asked for).
+		/// </summary>
+		std::string Note;
+
+		/// <summary>
+		/// Set, if nothing could be saved at all (no recording, no camera, no frames).
+		/// </summary>
+		std::string Error;
+
+		uint32 SavedFiles() const;
+	};
+
+	/// <summary>
+	/// The same as SaveLastMinutes, with the result in parts (for the remote control).
+	/// </summary>
+	SaveReport SaveClips(uint32 minutes, const std::string &cameraFilter, const std::string &label);
+
+	/// <summary>
+	/// Starts the remote control: a WebSocket, over which everything can be controlled with JSON commands (see the README, section Remote control). Needs
+	/// the recording to be started first.
+	/// </summary>
+	void StartRemoteControl();
+
 private:
 
 	bool Step();
@@ -312,6 +374,11 @@ private:
 	std::unique_ptr<Recorder> m_Recorder;
 	std::thread m_ControlThread;
 	std::atomic<bool> m_StopRequested{ false };
+
+	// The remote control: the commands, and the WebSocket server, which takes them.
+	std::unique_ptr<Core::CommandDispatcher> m_Commands;
+	std::unique_ptr<Core::WebSocketServer> m_WebSocket;
+	void RegisterCommands();
 
 	// The cameras, which timed out and did not come back yet (guarded by m_ClientsMutex), to report them when they are back.
 	std::set<std::string> m_OfflineCameras;

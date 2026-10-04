@@ -11,6 +11,7 @@ namespace Core::crypto
 	constexpr uint32 NONCE_BYTES = 12;
 	constexpr uint32 TAG_BYTES = 16;
 	constexpr uint32 SHA256_BYTES = 32;
+	constexpr uint32 SHA1_BYTES = 20;
 
 	/// <summary>
 	/// Random bytes from the random number generator of the system (secure enough for keys).
@@ -18,6 +19,11 @@ namespace Core::crypto
 	bool RandomBytes(void *dst, uint32 bytes);
 
 	void Sha256(const void *data, uint32 bytes, Byte out[SHA256_BYTES]);
+
+	/// <summary>
+	/// SHA-1. Only for the handshake of the WebSocket protocol, which demands it (it is not used for anything, which needs to be secure).
+	/// </summary>
+	void Sha1(const void *data, uint32 bytes, Byte out[SHA1_BYTES]);
 
 	void HmacSha256(const void *key, uint32 keyBytes, const void *data, uint32 bytes, Byte out[SHA256_BYTES]);
 

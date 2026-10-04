@@ -36,3 +36,4 @@ CamServer/faces/
 display.cfg
 CamServer/recordings/
 CamServer/devices.cfg
+CamServer/websocket_token.txt

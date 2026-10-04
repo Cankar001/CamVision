@@ -23,12 +23,14 @@ namespace Core::crypto
 		struct Providers
 		{
 			BCRYPT_ALG_HANDLE Sha256 = nullptr;
+			BCRYPT_ALG_HANDLE Sha1 = nullptr;
 			BCRYPT_ALG_HANDLE Hmac = nullptr;
 			BCRYPT_ALG_HANDLE Aes = nullptr;
 
 			Providers()
 			{
 				BCryptOpenAlgorithmProvider(&Sha256, BCRYPT_SHA256_ALGORITHM, nullptr, 0);
+				BCryptOpenAlgorithmProvider(&Sha1, BCRYPT_SHA1_ALGORITHM, nullptr, 0);
 				BCryptOpenAlgorithmProvider(&Hmac, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG);
 				if (BCryptOpenAlgorithmProvider(&Aes, BCRYPT_AES_ALGORITHM, nullptr, 0) == 0)
 				{
@@ -58,6 +60,12 @@ namespace Core::crypto
 	{
 		memset(out, 0, SHA256_BYTES);
 		BCryptHash(GetProviders().Sha256, nullptr, 0, (PUCHAR)data, bytes, out, SHA256_BYTES);
+	}
+
+	void Sha1(const void *data, uint32 bytes, Byte out[SHA1_BYTES])
+	{
+		memset(out, 0, SHA1_BYTES);
+		BCryptHash(GetProviders().Sha1, nullptr, 0, (PUCHAR)data, bytes, out, SHA1_BYTES);
 	}
 
 	void HmacSha256(const void *key, uint32 keyBytes, const void *data, uint32 bytes, Byte out[SHA256_BYTES])

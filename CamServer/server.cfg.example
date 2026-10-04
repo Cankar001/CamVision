@@ -75,6 +75,21 @@ record_event_minutes = 1
 # 0 turns it off.
 control_port = 45650
 
+# ---- Remote control (WebSocket) --------------------------------------------------------------------------------------------------------------
+# A WebSocket, over which the server is controlled with JSON commands: save the buffer of the cameras as videos, list the cameras, the displays and the
+# recordings, manage the device keys, stop the server (see README, section Remote control). A program has to log in with the token first.
+# 0 turns it off.
+websocket_port = 45651
+
+# 127.0.0.1: only programs on this computer can connect. 0.0.0.0: the whole network. Careful: the connection is NOT encrypted (the token and all
+# answers travel as they are), so only use it in a network you trust, or through an SSH tunnel / a TLS proxy.
+websocket_bind = 127.0.0.1
+
+# The secret, which a program has to send to log in. Empty: the token is made on the first start and stored in websocket_token_file
+# (CamServer --show_websocket_token prints it). Whoever has the token controls the server, keep it secret.
+websocket_token =
+websocket_token_file = websocket_token.txt
+
 # ---- Face detection and recognition (off by default) ----------------------------------------------------------------------------------------
 # Finds the faces in the camera feeds, and recognizes known people. It needs two model files and photos of the known people, see README.md
 # ("Face detection and recognition"). Faces are marked in the preview windows, and reported in the log.

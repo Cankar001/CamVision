@@ -75,6 +75,12 @@ Server::Server(const ServerConfig &config)
 
 Server::~Server()
 {
+	// No command may run, while the rest is taken down.
+	if (m_WebSocket)
+	{
+		m_WebSocket->Stop();
+	}
+
 	if (m_FramePreviewThread.joinable())
 	{
 		m_FramePreviewThread.join();
@@ -1329,17 +1335,28 @@ void Server::StartRecording()
 	}
 }
 
-std::string Server::SaveLastMinutes(uint32 minutes, const std::string &cameraFilter, const std::string &label, uint32 *savedFiles)
+uint32 Server::SaveReport::SavedFiles() const
 {
-	*savedFiles = 0;
+	uint32 files = 0;
+	for (const SavedClip &clip : Clips)
+	{
+		files += clip.Ok ? 1 : 0;
+	}
+
+	return files;
+}
+
+Server::SaveReport Server::SaveClips(uint32 minutes, const std::string &cameraFilter, const std::string &label)
+{
+	SaveReport report;
 	if (!m_Recorder)
 	{
-		return "recording is not available";
+		report.Error = "recording is not available";
+		return report;
 	}
 
 	// The buffer holds the last VideoBackupDuration minutes, no more can be saved.
 	uint32 available_minutes = m_Config.VideoBackupDuration;
-	std::string note;
 	if (minutes == 0)
 	{
 		minutes = m_Config.RecordDefaultMinutes;
@@ -1347,7 +1364,7 @@ std::string Server::SaveLastMinutes(uint32 minutes, const std::string &cameraFil
 
 	if (minutes > available_minutes)
 	{
-		note = " (the server only keeps the last " + std::to_string(available_minutes) + " minutes, see backup_minutes)";
+		report.Note = " (the server only keeps the last " + std::to_string(available_minutes) + " minutes, see backup_minutes)";
 		minutes = available_minutes;
 	}
 
@@ -1388,26 +1405,39 @@ std::string Server::SaveLastMinutes(uint32 minutes, const std::string &cameraFil
 
 	if (clips.empty())
 	{
-		return cameraFilter.empty() ? "no camera has sent frames in the last " + std::to_string(minutes) + " minutes" : "the camera '" + cameraFilter + "' is not connected or has sent no frames in the last " + std::to_string(minutes) + " minutes";
+		report.Error = cameraFilter.empty() ? "no camera has sent frames in the last " + std::to_string(minutes) + " minutes" : "the camera '" + cameraFilter + "' is not connected or has sent no frames in the last " + std::to_string(minutes) + " minutes";
+		return report;
 	}
 
 	// Writing takes a moment (large files), but needs no lock anymore: the frames are shared, not copied.
-	std::string report;
 	for (const Clip &clip : clips)
 	{
-		std::string path, error;
-		if (m_Recorder->SaveClip(clip.Camera, clip.Frames, label, &path, &error))
-		{
-			++(*savedFiles);
-			report += (report.empty() ? "" : "; ") + clip.Camera + ": " + path + " (" + std::to_string(clip.Frames.size()) + " frames)";
-		}
-		else
-		{
-			report += (report.empty() ? "" : "; ") + clip.Camera + ": FAILED, " + error;
-		}
+		SavedClip saved;
+		saved.Camera = clip.Camera;
+		saved.Frames = (uint32)clip.Frames.size();
+		saved.Ok = m_Recorder->SaveClip(clip.Camera, clip.Frames, label, &saved.Path, &saved.Error);
+		report.Clips.push_back(saved);
 	}
 
-	return report + note;
+	return report;
+}
+
+std::string Server::SaveLastMinutes(uint32 minutes, const std::string &cameraFilter, const std::string &label, uint32 *savedFiles)
+{
+	SaveReport report = SaveClips(minutes, cameraFilter, label);
+	*savedFiles = report.SavedFiles();
+	if (!report.Error.empty())
+	{
+		return report.Error;
+	}
+
+	std::string text;
+	for (const SavedClip &clip : report.Clips)
+	{
+		text += (text.empty() ? "" : "; ") + clip.Camera + ": " + (clip.Ok ? clip.Path + " (" + std::to_string(clip.Frames) + " frames)" : "FAILED, " + clip.Error);
+	}
+
+	return text + report.Note;
 }
 
 void Server::ControlLoop()
@@ -1502,4 +1532,367 @@ void Server::ControlLoop()
 	}
 
 	delete socket;
+}
+
+// ============================================================================================================================ remote control
+
+std::string LoadOrCreateWebSocketToken(const ServerConfig &config, std::string *error)
+{
+	if (!config.WebSocketToken.empty())
+	{
+		return config.WebSocketToken;
+	}
+
+	Core::FileSystem *fs = Core::FileSystem::Get();
+	std::string content;
+	if (fs->FileExists(config.WebSocketTokenFile) && fs->ReadTextFile(config.WebSocketTokenFile, &content) > 0)
+	{
+		while (!content.empty() && (content.back() == '\n' || content.back() == '\r' || content.back() == ' '))
+		{
+			content.pop_back();
+		}
+
+		if (content.size() >= 16)
+		{
+			return content;
+		}
+	}
+
+	// The first start: a new secret of 256 random bits.
+	Byte random[32];
+	if (!Core::crypto::RandomBytes(random, sizeof(random)))
+	{
+		*error = "the system could not make random numbers";
+		return "";
+	}
+
+	std::string token = Core::BytesToHex(random, sizeof(random));
+	if (!fs->WriteTextFile(config.WebSocketTokenFile, token + "\n"))
+	{
+		*error = "could not write " + config.WebSocketTokenFile;
+		return "";
+	}
+
+#ifndef CAM_PLATFORM_WINDOWS
+	// Only the owner may read the secret.
+	std::error_code permission_error;
+	std::filesystem::permissions(config.WebSocketTokenFile, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, permission_error);
+#endif
+
+	return token;
+}
+
+void Server::StartRemoteControl()
+{
+	if (m_Config.WebSocketPort == 0)
+	{
+		return;
+	}
+
+	std::string token_error;
+	std::string token = LoadOrCreateWebSocketToken(m_Config, &token_error);
+	if (token.empty())
+	{
+		CAM_LOG_ERROR("The remote control (WebSocket) is not started: {}", token_error);
+		return;
+	}
+
+	m_Commands = std::make_unique<Core::CommandDispatcher>(token);
+	RegisterCommands();
+
+	Core::WebSocketServerConfig ws_config;
+	ws_config.BindAddress = m_Config.WebSocketBind;
+	ws_config.Port = m_Config.WebSocketPort;
+	m_WebSocket = std::make_unique<Core::WebSocketServer>(ws_config, m_Commands->AsMessageHandler());
+	if (!m_WebSocket->Start())
+	{
+		CAM_LOG_ERROR("Could not open the port {0} of the remote control (WebSocket) on {1} (is another server running?).", m_Config.WebSocketPort, m_Config.WebSocketBind);
+		m_WebSocket.reset();
+		return;
+	}
+
+	CAM_LOG_INFO("Remote control: ws://{0}:{1} {2}. Log in with the token from {3} (CamServer --show_websocket_token).", m_Config.WebSocketBind, m_Config.WebSocketPort, m_Config.WebSocketBind == "127.0.0.1" ? "(only programs on this computer)" : "(the network! the connection is not encrypted)", m_Config.WebSocketTokenFile);
+}
+
+void Server::RegisterCommands()
+{
+	using Core::Json;
+	using Context = Core::CommandDispatcher::Context;
+
+	// Lists the cameras (the caller holds m_ClientsMutex).
+	auto camera_list = [this]()
+	{
+		Json cameras = Json::Array();
+		auto now = std::chrono::steady_clock::now();
+		for (auto &client : m_Clients)
+		{
+			uint32 frames = client->Frames.Size();
+			double seconds = frames > 1 ? (client->Frames.At(frames - 1).TimeMS - client->Frames.At(0).TimeMS) / 1000.0 : 0.0;
+
+			Json camera = Json::Object();
+			camera["name"] = client->FrameTitle;
+			camera["address"] = Core::AddressToString(client->Address);
+			camera["frames_buffered"] = frames;
+			camera["seconds_buffered"] = seconds;
+			camera["last_seen_ms_ago"] = (int64)std::chrono::duration_cast<std::chrono::milliseconds>(now - client->LastSeen).count();
+			camera["faces_visible"] = (uint32)client->Faces.size();
+			cameras.Push(camera);
+		}
+
+		return cameras;
+	};
+
+	m_Commands->Register("status", "the state of the server: cameras, displays, recording settings, the devices", [this, camera_list](const Json &, const Context &, Json *result, std::string *)
+	{
+		{
+			std::lock_guard<std::mutex> lock(m_ClientsMutex);
+			(*result)["cameras"] = camera_list();
+			(*result)["displays"] = (uint32)m_Displays.size();
+		}
+
+		(*result)["protocol_version"] = (uint32)m_Version;
+		(*result)["buffer_minutes"] = m_Config.VideoBackupDuration;
+		(*result)["device_keys_required"] = m_Devices != nullptr;
+		if (m_Devices)
+		{
+			(*result)["devices"] = m_Devices->Count();
+		}
+
+		Json recording = Json::Object();
+		recording["folder"] = m_Config.Recording.Path;
+		recording["scheduled"] = m_Recorder && m_Recorder->IsScheduled();
+		recording["schedule"] = m_Config.Recording.Schedule;
+		recording["default_minutes"] = m_Config.RecordDefaultMinutes;
+		(*result)["recording"] = recording;
+		return true;
+	});
+
+	m_Commands->Register("cameras", "the connected cameras, with how much video is buffered of each", [this, camera_list](const Json &, const Context &, Json *result, std::string *)
+	{
+		std::lock_guard<std::mutex> lock(m_ClientsMutex);
+		(*result)["cameras"] = camera_list();
+		return true;
+	});
+
+	m_Commands->Register("displays", "the connected displays", [this](const Json &, const Context &, Json *result, std::string *)
+	{
+		Json displays = Json::Array();
+		std::lock_guard<std::mutex> lock(m_ClientsMutex);
+		for (auto &display : m_Displays)
+		{
+			Json item = Json::Object();
+			item["name"] = display->Name;
+			item["address"] = Core::AddressToString(display->Address);
+			item["camera"] = display->CameraFilter;
+			item["max_fps"] = display->MaxFPS;
+			displays.Push(item);
+		}
+
+		(*result)["displays"] = displays;
+		return true;
+	});
+
+	m_Commands->Register("save", "saves the last minutes of the buffer of one or all cameras as video files. args: camera (name, empty or missing = all cameras), minutes (default: record_default_minutes), label (part of the file name)",
+		[this](const Json &args, const Context &, Json *result, std::string *error)
+	{
+		std::string camera = args.Get("camera").AsString();
+		int64 minutes = args.Get("minutes").AsInt(0);
+		if (minutes < 0 || minutes > 24 * 60)
+		{
+			*error = "minutes must be a number between 1 and 1440";
+			return false;
+		}
+
+		std::string label = args.Get("label").AsString();
+		if (label.empty())
+		{
+			label = "remote";
+		}
+
+		// The recorder makes the label safe for a file name.
+		SaveReport report = SaveClips((uint32)minutes, camera, label);
+		if (!report.Error.empty())
+		{
+			*error = report.Error;
+			return false;
+		}
+
+		Json clips = Json::Array();
+		for (const SavedClip &clip : report.Clips)
+		{
+			Json item = Json::Object();
+			item["camera"] = clip.Camera;
+			item["ok"] = clip.Ok;
+			item["frames"] = clip.Frames;
+			if (clip.Ok)
+			{
+				std::error_code path_error;
+				item["file"] = std::filesystem::path(clip.Path).generic_string();
+				item["absolute_path"] = std::filesystem::absolute(clip.Path, path_error).generic_string();
+			}
+			else
+			{
+				item["error"] = clip.Error;
+			}
+
+			clips.Push(item);
+		}
+
+		(*result)["saved"] = report.SavedFiles();
+		(*result)["clips"] = clips;
+		if (!report.Note.empty())
+		{
+			(*result)["note"] = report.Note;
+		}
+
+		CAM_LOG_INFO("Saved {0} video(s) on request of the remote control.", report.SavedFiles());
+		return report.SavedFiles() > 0;
+	});
+
+	m_Commands->Register("recordings", "the newest video files in the recordings folder. args: limit (default 50, at most 500)",
+		[this](const Json &args, const Context &, Json *result, std::string *error)
+	{
+		int64 limit = std::clamp<int64>(args.Get("limit").AsInt(50), 1, 500);
+
+		struct Entry
+		{
+			std::string Relative;
+			uint64 Bytes;
+			int64 Modified;
+		};
+
+		std::vector<Entry> entries;
+		std::error_code fs_error;
+		std::filesystem::path root(m_Config.Recording.Path);
+		if (std::filesystem::is_directory(root, fs_error))
+		{
+			for (std::filesystem::recursive_directory_iterator it(root, fs_error), end; !fs_error && it != end; it.increment(fs_error))
+			{
+				std::error_code entry_error;
+				if (!it->is_regular_file(entry_error) || it->path().extension() != ".avi")
+				{
+					continue;
+				}
+
+				Entry entry;
+				entry.Relative = std::filesystem::relative(it->path(), root, entry_error).generic_string();
+				entry.Bytes = (uint64)it->file_size(entry_error);
+				// The clock of the file system has its own start (1601 on Windows), converted to seconds since 1970.
+				auto file_time = it->last_write_time(entry_error);
+				auto system_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(file_time - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
+				entry.Modified = (int64)std::chrono::duration_cast<std::chrono::seconds>(system_time.time_since_epoch()).count();
+				entries.push_back(entry);
+			}
+		}
+
+		std::sort(entries.begin(), entries.end(), [](const Entry &a, const Entry &b) { return a.Modified > b.Modified; });
+
+		Json files = Json::Array();
+		for (size_t i = 0; i < entries.size() && (int64)i < limit; ++i)
+		{
+			Json item = Json::Object();
+			item["file"] = entries[i].Relative;
+			item["bytes"] = entries[i].Bytes;
+			item["modified"] = entries[i].Modified;		// seconds since 1970
+			files.Push(item);
+		}
+
+		(*result)["folder"] = m_Config.Recording.Path;
+		(*result)["total"] = (uint32)entries.size();
+		(*result)["files"] = files;
+		(void)error;
+		return true;
+	});
+
+	m_Commands->Register("devices", "the cameras and displays, which have a key (never the keys themselves)", [this](const Json &, const Context &, Json *result, std::string *error)
+	{
+		if (!m_Devices)
+		{
+			*error = "device keys are turned off (auth = false)";
+			return false;
+		}
+
+		Json devices = Json::Array();
+		for (const Core::Device &device : m_Devices->List())
+		{
+			Json item = Json::Object();
+			item["name"] = device.Name;
+			item["role"] = Core::DeviceRoleName(device.Role);
+			item["key_id"] = Core::KeyIdToString(device.KeyId);
+			devices.Push(item);
+		}
+
+		(*result)["devices"] = devices;
+		return true;
+	});
+
+	m_Commands->Register("device_add", "makes a key for a new camera or display. args: role (camera or display), name. The key is only handed out to programs on the computer of the server",
+		[this](const Json &args, const Context &context, Json *result, std::string *error)
+	{
+		if (!m_Devices)
+		{
+			*error = "device keys are turned off (auth = false)";
+			return false;
+		}
+
+		if (!context.IsLoopback)
+		{
+			// The connection is not encrypted, a key must not be sent over the network.
+			*error = "a key is only handed out to a program on the computer of the server (use CamServer --add_device there)";
+			return false;
+		}
+
+		Core::DeviceRole role = Core::DeviceRoleFromName(args.Get("role").AsString());
+		Core::Device device;
+		if (role == Core::DeviceRole::None || !m_Devices->Add(role, args.Get("name").AsString(), &device, error))
+		{
+			if (role == Core::DeviceRole::None)
+			{
+				*error = "role must be camera or display";
+			}
+
+			return false;
+		}
+
+		(*result)["name"] = device.Name;
+		(*result)["role"] = Core::DeviceRoleName(device.Role);
+		(*result)["key"] = Core::BytesToHex(device.Key, Core::crypto::KEY_BYTES);
+		(*result)["key_id"] = Core::KeyIdToString(device.KeyId);
+		CAM_LOG_INFO("The {0} '{1}' was added on request of the remote control.", Core::DeviceRoleName(device.Role), device.Name);
+		return true;
+	});
+
+	m_Commands->Register("device_remove", "takes the key of a device away, it is disconnected. args: name",
+		[this](const Json &args, const Context &, Json *result, std::string *error)
+	{
+		if (!m_Devices)
+		{
+			*error = "device keys are turned off (auth = false)";
+			return false;
+		}
+
+		std::string name = args.Get("name").AsString();
+		if (!m_Devices->Remove(name, error))
+		{
+			return false;
+		}
+
+		// The connection of the device ends at once (the secure socket checks the list).
+		if (m_Secure)
+		{
+			m_Secure->UpdateDevices();
+		}
+
+		(*result)["removed"] = name;
+		CAM_LOG_INFO("The device '{0}' was removed on request of the remote control.", name);
+		return true;
+	});
+
+	m_Commands->Register("stop", "stops the server (the videos, which are being recorded, are finished first)", [this](const Json &, const Context &, Json *result, std::string *)
+	{
+		CAM_LOG_INFO("Stop requested through the remote control.");
+		m_StopRequested = true;
+		(*result)["stopping"] = true;
+		return true;
+	});
 }

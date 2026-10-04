@@ -183,6 +183,44 @@ The server keeps the last `backup_minutes` (5 by default) of every camera in mem
 
 **The disk:** old videos are deleted automatically, after `record_keep_days` days (14 by default) and when all videos together are larger than `record_max_gb` gigabytes (20 by default, the oldest ones first). Set them to 0 to keep everything, but then watch the disk: a camera produces around 4 to 10 GB per day. Stop the server with `Ctrl+C` or `CamServer --control_stop`, so that the file, which is being written, is finished (otherwise the last file may not be playable).
 
+# Remote control
+
+The server has a **WebSocket** for remote control. Over it, a program (a web page, a script, a phone app, a home automation) can control the server with JSON commands. The first command saves the buffer of one or all cameras to disk as a video file, more commands show what is going on and manage the devices.
+
+**Setup:** it is on by default, on the port `45651`, and only reachable from the computer of the server (`websocket_port`, `websocket_bind` in `server.cfg`). Every program has to log in with a **token** first. It is made on the first start of the server, stored in `CamServer/websocket_token.txt` (ignored by git), and `CamServer --show_websocket_token` prints it. Whoever has the token controls the server.
+
+**Try it** in the browser console (F12) of any page, or in Node.js 22 or newer:
+
+```js
+const ws = new WebSocket("ws://127.0.0.1:45651");
+ws.onmessage = (e) => console.log(JSON.parse(e.data));
+ws.onopen = () => {
+  ws.send(JSON.stringify({ id: 1, cmd: "auth", args: { token: "PASTE THE TOKEN HERE" } }));
+  ws.send(JSON.stringify({ id: 2, cmd: "save", args: { camera: "Front door", minutes: 3 } }));
+};
+```
+
+**The messages** are JSON text. A request has a `cmd`, optional `args`, and an optional `id` (any JSON value), which comes back in the answer, so you can tell the answers apart. The answer is `{"id": 2, "ok": true, "result": {...}}`, or `{"id": 2, "ok": false, "error": "what went wrong"}`. The server answers every request, in the order of the requests. The first command must be `auth` (three wrong tokens end the connection, and a connection, which does not log in within 10 seconds, is closed). Messages can be up to 64 KB.
+
+| Command | Arguments | What it does |
+|---|---|---|
+| `auth` | `token` | Logs in. |
+| `ping` | | Answers `{"pong": true}`, to check the connection. |
+| `help` | | Lists all commands with a description. |
+| `save` | `camera` (name, empty or missing: **all** cameras), `minutes` (default `record_default_minutes`, at most `backup_minutes`), `label` (part of the file name, default `remote`) | **Stores the buffer (the last minutes) of one or all cameras to disk as a video file** (AVI, in `recordings/<camera>/`). The result lists the files: `{"saved": 2, "clips": [{"camera": "Front door", "ok": true, "frames": 1500, "file": "recordings/Front_door/20260101_120000_remote.avi", "absolute_path": "..."}]}`. |
+| `status` | | The state of the server: cameras (with the buffered video), displays, recording settings, the number of devices. |
+| `cameras` | | The connected cameras: name, address, buffered frames and seconds, when the camera was last heard of. |
+| `displays` | | The connected displays. |
+| `recordings` | `limit` (default 50, at most 500) | The newest video files in the recordings folder, with size and time (seconds since 1970). |
+| `devices` | | The cameras and displays with a key (name, role, key id, never the key). |
+| `device_add` | `role` (`camera` or `display`), `name` | Makes a key for a new device and returns it (see Security). Only for programs on the computer of the server: the connection is not encrypted. |
+| `device_remove` | `name` | Takes the key of a device away, it is disconnected. |
+| `stop` | | Stops the server (the videos, which are being recorded, are finished first). |
+
+New commands are added in `Server::RegisterCommands` (`CamServer/src/Server.cpp`): a name, a description and a function, which gets the arguments and fills the result. Everything of the protocol (the login, the answers, the errors) is done for them.
+
+**Security:** the token is the only protection. The default (`127.0.0.1`) keeps the network out, and a web page in your browser cannot control the server without the token. With `websocket_bind = 0.0.0.0` the remote control is open to the network **without encryption** (the token and the answers can be read by others in the network): use it only in a network you trust, or put an SSH tunnel (`ssh -L 45651:127.0.0.1:45651 server`) or a TLS proxy in front of it. The keys of devices are never sent over the network (`device_add` only works from the same computer). `CamServer --record_now` (the control port) still works as before.
+
 # Displays
 
 A display is another computer (for example a Raspberry Pi with a screen), which shows the pictures of the cameras. It connects to the server like a camera client, but tells the server that it is a display: instead of sending frames it **receives** the frames of the cameras from the server, and shows them. This way the screen can be at a different place than the camera, and any number of displays can be set up in the house, each one showing all cameras or just one.
@@ -250,7 +288,7 @@ The camera client and the server are configured with a simple settings file and/
 The complete list with explanations is in the example files, copy them and edit the copy:
 
 - [CamClient/client.cfg.example](CamClient/client.cfg.example): server address and port, camera index and size, headless mode, JPEG quality and bandwidth tuning (`send_width`, `max_fps`).
-- [CamServer/server.cfg.example](CamServer/server.cfg.example): port, minutes of video kept per camera, timeout for dead clients, preview windows, the device keys (`auth`, `devices_file`).
+- [CamServer/server.cfg.example](CamServer/server.cfg.example): port, minutes of video kept per camera, timeout for dead clients, preview windows, the device keys (`auth`, `devices_file`), the remote control (`websocket_port`, `websocket_bind`, `websocket_token`).
 
 Every program reads its settings file (`client.cfg`, `server.cfg`, `display.cfg`, ...) from its project folder (`CamClient`, `CamServer`, ...). A CamClient, which was installed by the updater, runs in the folder it was installed to (`install_path`) and reads `client.cfg` from there.
 
