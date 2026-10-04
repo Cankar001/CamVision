@@ -4,6 +4,22 @@
 # UDP port, on which the server listens.
 port = 45645
 
+# ---- Security --------------------------------------------------------------------------------------------------------------------------------
+# Only cameras and displays with their own key may connect, and everything between them and the server is encrypted (AES-256) and protected
+# against changes and replays. The keys are made on this computer, one for every device:
+#   CamServer --add_device=camera --name="Front door"       prints the key for client.cfg of this camera (key = ...)
+#   CamServer --add_device=display --name="Living room"     prints the key for display.cfg of this display
+#   CamServer --list_devices                                shows the devices (never the keys)
+#   CamServer --remove_device="Front door"                  takes the key away (a lost or stolen device), a running server ends its connection
+# The server notices changes of the file while it is running, it does not have to be restarted. A key of a display cannot be used as a camera and the
+# other way around, and a camera always has the name, which it was given with --add_device.
+# false turns all of this off: everybody in the network can connect as a camera or as a display, and nothing is encrypted. Only for a network you trust,
+# and for older programs without keys.
+auth = true
+
+# The file with the devices and their keys. It is a secret (whoever can read it can pretend to be a device), keep it out of backups and git.
+devices_file = devices.cfg
+
 # Minutes of video kept in memory per camera.
 backup_minutes = 5
 

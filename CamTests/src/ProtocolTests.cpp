@@ -12,6 +12,9 @@ static_assert(sizeof(ClientFrameChunkMessage) == sizeof(header_t) + 4 + 4 + 2 + 
 static_assert(sizeof(ServerFrameChunkMessage) == sizeof(header_t) + 4 + MAX_FRAME_NAME_LENGTH + 4 + 4 + 2 + 2, "chunk header must have no padding");
 static_assert(sizeof(ClientConnectionStartMessage) == sizeof(header_t) + MAX_FRAME_NAME_LENGTH + 4, "no padding");
 static_assert(sizeof(DisplayConnectionStartMessage) == sizeof(header_t) + 2 * MAX_FRAME_NAME_LENGTH + 4, "no padding");
+static_assert(sizeof(AuthHelloMessage) == sizeof(header_t) + 8 + AUTH_RANDOM_BYTES, "no padding");
+static_assert(sizeof(AuthChallengeMessage) == sizeof(header_t) + 2 * AUTH_RANDOM_BYTES, "no padding");
+static_assert(sizeof(SecureDataHeader) == sizeof(header_t) + 8, "no padding");
 
 TEST(Protocol, MessageTypeValuesAreStable)
 {
@@ -26,6 +29,10 @@ TEST(Protocol, MessageTypeValuesAreStable)
 	CHECK_EQ((int)MessageType::DISPLAY_CONNECTION_START, 8);
 	CHECK_EQ((int)MessageType::SERVER_DISPLAY_START, 9);
 	CHECK_EQ((int)MessageType::SERVER_FRAME_CHUNK, 10);
+	CHECK_EQ((int)MessageType::AUTH_HELLO, 11);
+	CHECK_EQ((int)MessageType::AUTH_CHALLENGE, 12);
+	CHECK_EQ((int)MessageType::SECURE_DATA, 13);
+	CHECK_EQ((int)MessageType::AUTH_RESET, 14);
 }
 
 TEST(Protocol, ChunksFitIntoOneEthernetFrame)
@@ -34,6 +41,14 @@ TEST(Protocol, ChunksFitIntoOneEthernetFrame)
 	const uint32 ip_and_udp_header = 20 + 8;
 	CHECK((uint32)sizeof(ServerFrameChunkMessage) + FRAME_CHUNK_PAYLOAD_SIZE + ip_and_udp_header <= 1500u);
 	CHECK((uint32)sizeof(ClientFrameChunkMessage) + FRAME_CHUNK_PAYLOAD_SIZE + ip_and_udp_header <= 1500u);
+}
+
+TEST(Protocol, SecureChunksStillFitIntoOneEthernetFrame)
+{
+	// Sealed messages are larger by the counter header and the tag of the encryption (28 bytes): they must not be fragmented either.
+	const uint32 ip_and_udp_header = 20 + 8;
+	const uint32 secure_overhead = (uint32)sizeof(SecureDataHeader) + 16;
+	CHECK((uint32)sizeof(ServerFrameChunkMessage) + FRAME_CHUNK_PAYLOAD_SIZE + secure_overhead + ip_and_udp_header <= 1500u);
 }
 
 TEST(Protocol, AFrameOfTheMaximumSizeNeedsLessChunksThanTheCounterHolds)

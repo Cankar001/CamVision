@@ -58,6 +58,78 @@ static int SendControlCommand(uint16 port, const std::string &command)
 	return 1;
 }
 
+// --add_device=camera|display --name="Front door": makes a key for a new device and stores it. --remove_device="Front door", --list_devices.
+static int ManageDevices(const Core::Config &settings, const std::string &file)
+{
+	Core::DeviceRegistry registry(file);
+	std::string error;
+	if (!registry.Load(&error))
+	{
+		std::cerr << "Problems in " << file << ": " << error << std::endl;
+	}
+
+	std::string remove = settings.GetString("remove_device", "");
+	if (!remove.empty())
+	{
+		if (!registry.Remove(remove, &error))
+		{
+			std::cerr << "Could not remove the device: " << error << std::endl;
+			return 1;
+		}
+
+		std::cout << "Removed the device \"" << remove << "\". Its key does not work anymore (a running server notices that within seconds and ends its connection)." << std::endl;
+		return 0;
+	}
+
+	std::string add = settings.GetString("add_device", "");
+	if (!add.empty())
+	{
+		Core::DeviceRole role = Core::DeviceRoleFromName(add);
+		std::string name = settings.GetString("name", "");
+		if (role == Core::DeviceRole::None || name.empty())
+		{
+			std::cerr << "Usage: CamServer --add_device=camera --name=\"Front door\"      (or --add_device=display --name=\"Living room\")" << std::endl;
+			return 1;
+		}
+
+		Core::Device device;
+		if (!registry.Add(role, name, &device, &error))
+		{
+			std::cerr << "Could not add the device: " << error << std::endl;
+			return 1;
+		}
+
+		bool camera = role == Core::DeviceRole::Camera;
+		std::cout << "Added the " << Core::DeviceRoleName(role) << " \"" << device.Name << "\" to " << file << "." << std::endl << std::endl;
+		std::cout << "Put these lines into " << (camera ? "CamClient/client.cfg" : "CamDisplay/display.cfg") << " of the " << Core::DeviceRoleName(role) << " (on the device itself):" << std::endl << std::endl;
+		std::cout << "    key = " << Core::BytesToHex(device.Key, Core::crypto::KEY_BYTES) << std::endl;
+		if (camera)
+		{
+			std::cout << "    name = " << device.Name << std::endl;
+		}
+
+		std::cout << std::endl << "The key is also stored in " << file << " on this computer. Keep both secret: whoever has the key can pretend to be this device." << std::endl;
+		std::cout << "A running server does not need to be restarted." << std::endl;
+		return 0;
+	}
+
+	// --list_devices: the names and roles, never the keys.
+	std::vector<Core::Device> devices = registry.List();
+	if (devices.empty())
+	{
+		std::cout << "There are no devices in " << file << " yet. Add one with: CamServer --add_device=camera --name=\"Front door\"" << std::endl;
+		return 0;
+	}
+
+	std::cout << devices.size() << " devices in " << file << ":" << std::endl;
+	for (const Core::Device &device : devices)
+	{
+		std::cout << "  " << Core::DeviceRoleName(device.Role) << "  " << device.Name << "  (key id " << Core::KeyIdToString(device.KeyId) << ")" << std::endl;
+	}
+
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	Core::Init();
@@ -152,6 +224,17 @@ int main(int argc, char *argv[])
 	config.RecordOnUnknownPerson = settings.GetBool("record_on_unknown_person", config.RecordOnUnknownPerson);
 	config.RecordEventMinutes = (uint32)std::max(settings.GetInt("record_event_minutes", config.RecordEventMinutes), 1);
 	config.ControlPort = (uint16)std::max(settings.GetInt("control_port", config.ControlPort), 0);
+	config.RequireAuth = settings.GetBool("auth", config.RequireAuth);
+	config.DevicesFile = settings.GetString("devices_file", config.DevicesFile);
+
+	// The commands to manage the devices (cameras and displays), which are allowed to connect. They change the file with the devices and quit; a running
+	// server notices the change on its own.
+	if (!settings.GetString("add_device", "").empty() || !settings.GetString("remove_device", "").empty() || settings.GetBool("list_devices", false))
+	{
+		int exit_code = ManageDevices(settings, config.DevicesFile);
+		Core::Shutdown();
+		return exit_code;
+	}
 
 	// The commands for a server, which is already running (see the control port). This program just sends the command and prints the answer.
 	std::string command;

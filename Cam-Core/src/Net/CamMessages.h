@@ -22,7 +22,13 @@ enum MessageType : uint16
 	SERVER_CLIENT_UNKNOWN,
 	DISPLAY_CONNECTION_START,
 	SERVER_DISPLAY_START,
-	SERVER_FRAME_CHUNK
+	SERVER_FRAME_CHUNK,
+
+	// The secure connection (see Net/SecureSocket.h). With device keys, all messages above travel inside SECURE_DATA, encrypted and authenticated.
+	AUTH_HELLO,			// device -> server: "I am the device with this key id", and a random number
+	AUTH_CHALLENGE,		// server -> device: its own random number, which makes the keys of this connection new
+	SECURE_DATA,		// both directions: one of the messages above, sealed
+	AUTH_RESET			// server -> device: "I do not know this connection (anymore)", the device has to start with AUTH_HELLO again
 };
 
 // The version of the protocol, every message carries it. It only changes, if the messages change in a way, which old programs do not understand.
@@ -126,6 +132,37 @@ struct ServerFrameChunkMessage
 	uint32 FrameSize;						// Total size of the JPEG encoded frame in bytes.
 	uint16 ChunkIndex;
 	uint16 ChunkCount;
+};
+
+// ---- The secure connection. The device proves with a challenge, that it knows its key (the key itself is never sent), both sides make the keys
+// of the connection out of the device key and the random numbers of both sides, and every message afterwards is sealed with AES-256-GCM.
+
+constexpr uint32 AUTH_RANDOM_BYTES = 16;
+
+struct AuthHelloMessage
+{
+	header_t Header;
+	uint64 KeyId;
+	uint8 ClientRandom[AUTH_RANDOM_BYTES];
+};
+
+struct AuthChallengeMessage
+{
+	header_t Header;
+	uint8 ClientRandom[AUTH_RANDOM_BYTES];		// the one of the hello, so the device knows, which hello is answered
+	uint8 ServerRandom[AUTH_RANDOM_BYTES];
+};
+
+// Followed by the encrypted message and the tag (16 bytes). The header and the counter are protected by the tag, but not encrypted.
+struct SecureDataHeader
+{
+	header_t Header;
+	uint64 Counter;		// Increases by one with every message of a direction, it is the nonce, and tells replayed messages
+};
+
+struct AuthResetMessage
+{
+	header_t Header;
 };
 
 #pragma pack(pop)

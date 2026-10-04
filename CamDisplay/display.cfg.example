@@ -5,7 +5,13 @@
 server_ip = 127.0.0.1
 server_port = 45645
 
-# The name of this display, shown in the log of the server.
+# The key of this display. Make it on the computer of the server with
+#   CamServer --add_device=display --name="Living room"
+# which prints the line to put here. With the key, the connection to the server is authenticated and encrypted: nobody else can see the pictures. The
+# server does not talk to a display without a key (unless auth = false in server.cfg). The key is a secret: whoever has it can see all cameras.
+key =
+
+# The name of this display, shown in the log of the server. With device keys, the server uses the name, which the display got with --add_device.
 name = Display #1
 
 # The one camera, which this display shows (the name of the camera, as set with "name" in client.cfg), fullscreen.

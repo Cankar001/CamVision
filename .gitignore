@@ -35,3 +35,4 @@ CamServer/known_faces/*
 CamServer/faces/
 display.cfg
 CamServer/recordings/
+CamServer/devices.cfg

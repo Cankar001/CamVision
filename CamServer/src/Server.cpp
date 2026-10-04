@@ -26,6 +26,20 @@ Server::Server(const ServerConfig &config)
 {
 	m_Socket = Core::Socket::Create();
 
+	if (m_Config.RequireAuth)
+	{
+		// Everything goes through the secure socket from now on: only devices with a key are heard, and all messages are encrypted.
+		m_Devices = std::make_unique<Core::DeviceRegistry>(m_Config.DevicesFile);
+		std::string devices_error;
+		if (!m_Devices->Load(&devices_error))
+		{
+			CAM_LOG_ERROR("Problems in the list of devices: {}", devices_error);
+		}
+
+		m_Secure = Core::SecureSocket::CreateServer(m_Socket, m_Devices.get());
+		m_Socket = m_Secure;
+	}
+
 	std::string cwd = "";
 	Core::FileSystem::Get()->GetCurrentWorkingDirectory(&cwd);
 	// The protocol version is independent of the version of the software (CAM_VERSION).
@@ -36,9 +50,27 @@ Server::Server(const ServerConfig &config)
 	CAM_LOG_INFO("IP                    : {}", config.ServerIP);
 	CAM_LOG_INFO("Port                  : {}", config.Port);
 	CAM_LOG_INFO("Video backup duration : {}", config.VideoBackupDuration);
+	if (m_Devices)
+	{
+		CAM_LOG_INFO("Device keys           : required, {0} devices in {1}", m_Devices->Count(), config.DevicesFile);
+	}
+	else
+	{
+		CAM_LOG_INFO("Device keys           : OFF");
+	}
 	CAM_LOG_INFO("Current Server version: {0} (protocol {1})", software_version, m_Version);
 	CAM_LOG_INFO("Current CWD           : {}", cwd);
 	CAM_LOG_INFO("================================================================");
+
+	if (m_Devices && m_Devices->Count() == 0)
+	{
+		CAM_LOG_WARN("There are no devices in {} yet, so no camera and no display can connect. Add them with: CamServer --add_device=camera --name=\"Front door\"", config.DevicesFile);
+	}
+
+	if (!m_Devices)
+	{
+		CAM_LOG_WARN("The authentication is OFF (auth = false): everybody in the network can connect as a camera or as a display, and the pictures are not encrypted. Only use this in a network you trust.");
+	}
 }
 
 Server::~Server()
@@ -67,6 +99,7 @@ Server::~Server()
 
 	delete m_Socket;
 	m_Socket = nullptr;
+	m_Secure = nullptr;
 }
 
 void Server::Run()
@@ -213,6 +246,24 @@ bool Server::Step()
 	return true;
 }
 
+bool Server::ShouldWarnAboutRefusal(Core::addr_t addr)
+{
+	int64 now = Core::QueryMS();
+	if (m_RefusalWarnings.size() > 1024)
+	{
+		m_RefusalWarnings.clear();
+	}
+
+	auto found = m_RefusalWarnings.find(addr.Value);
+	if (found != m_RefusalWarnings.end() && now - found->second < 30000)
+	{
+		return false;
+	}
+
+	m_RefusalWarnings[addr.Value] = now;
+	return true;
+}
+
 bool Server::OnClientConnected(Core::addr_t &clientAddr, Byte *message, int32 addrLen)
 {
 	header_t *header = (header_t *)message;
@@ -235,6 +286,25 @@ bool Server::OnClientConnected(Core::addr_t &clientAddr, Byte *message, int32 ad
 	char name[MAX_FRAME_NAME_LENGTH];
 	memcpy(name, msg->FrameName, MAX_FRAME_NAME_LENGTH);
 	name[MAX_FRAME_NAME_LENGTH - 1] = 0;
+
+	if (m_Secure)
+	{
+		// Only a device with the key of a camera is a camera, and it has the name, which it was given in the list of devices (it cannot pretend to be another
+		// camera, nor a display).
+		Core::SecureSocket::Peer peer;
+		if (!m_Secure->GetPeer(clientAddr, &peer) || peer.Role != Core::DeviceRole::Camera)
+		{
+			if (ShouldWarnAboutRefusal(clientAddr))
+			{
+				CAM_LOG_WARN("{0} tried to connect as a camera, but its key is not the key of a camera. Refused.", Core::AddressToString(clientAddr));
+			}
+
+			return false;
+		}
+
+		memset(name, 0, sizeof(name));
+		memcpy(name, peer.Name.c_str(), std::min<size_t>(peer.Name.size(), MAX_FRAME_NAME_LENGTH - 1));
+	}
 
 	{
 		std::lock_guard<std::mutex> lock(m_ClientsMutex);
@@ -385,6 +455,24 @@ bool Server::OnDisplayConnected(Core::addr_t &displayAddr, Byte *message, int32 
 	memcpy(filter, msg->CameraFilter, MAX_FRAME_NAME_LENGTH);
 	name[MAX_FRAME_NAME_LENGTH - 1] = 0;
 	filter[MAX_FRAME_NAME_LENGTH - 1] = 0;
+
+	if (m_Secure)
+	{
+		// Only a device with the key of a display receives the pictures of the cameras (a camera key does not), under the name from the list of devices.
+		Core::SecureSocket::Peer peer;
+		if (!m_Secure->GetPeer(displayAddr, &peer) || peer.Role != Core::DeviceRole::Display)
+		{
+			if (ShouldWarnAboutRefusal(displayAddr))
+			{
+				CAM_LOG_WARN("{0} tried to connect as a display, but its key is not the key of a display. Refused.", Core::AddressToString(displayAddr));
+			}
+
+			return false;
+		}
+
+		memset(name, 0, sizeof(name));
+		memcpy(name, peer.Name.c_str(), std::min<size_t>(peer.Name.size(), MAX_FRAME_NAME_LENGTH - 1));
+	}
 
 	// Nobody needs more than a video frame rate, and the server decides if the display has no wish.
 	uint32 max_fps = msg->MaxFPS == 0 ? 10 : std::min<uint32>(msg->MaxFPS, 60);

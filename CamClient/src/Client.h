@@ -74,6 +74,12 @@ struct ClientConfig
 	std::string Name = "Client #1";
 
 	/// <summary>
+	/// The key of this device (64 hex characters), which the server made with CamServer --add_device. With it, the connection to the server is
+	/// authenticated and encrypted. Without it, the messages are sent as they are, which only works with a server, which has the authentication turned off.
+	/// </summary>
+	std::string Key;
+
+	/// <summary>
 	/// The frames per second announced to the server, used to size its backup buffer.
 	/// </summary>
 	uint32 FPS = 30;
@@ -195,6 +201,9 @@ private:
 	
 	uint32 m_Version;
 	std::atomic<bool> m_Running = true;
+
+	// True, if the connection to the server is authenticated and encrypted (a device key is set).
+	bool m_Secure = false;
 	std::atomic<bool> m_NetworkThreadFinished = false;
 	bool m_SentConnectionCloseRequest = false;
 	std::atomic<bool> m_ConnectedToServer = false;

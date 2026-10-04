@@ -36,6 +36,7 @@ int main(int argc, char *argv[])
 	config.ServerIP = settings.GetString("server_ip", config.ServerIP);
 	config.Port = (uint16)settings.GetInt("server_port", config.Port);
 	config.Name = settings.GetString("name", config.Name);
+	config.Key = settings.GetString("key", config.Key);
 	config.Camera = settings.GetString("camera", config.Camera);
 	config.MaxFPS = (uint32)std::max(settings.GetInt("max_fps", config.MaxFPS), 1);
 	config.WindowWidth = (uint32)std::max(settings.GetInt("window_width", config.WindowWidth), 320);

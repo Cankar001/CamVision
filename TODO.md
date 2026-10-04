@@ -15,8 +15,8 @@ Open work for CamVision. Items marked with a path point at the code where they b
 
 ## Features not started
 
-- [ ] **No authentication or encryption** between cameras, displays and the server: everybody in the network can connect a display and see all cameras (or send frames as a camera). Needs a shared secret or key per device, and encrypted frames, before the server is used outside a trusted home network.
 - [ ] Web interface.
+- [ ] **Security, next steps** (the devices are authenticated and the connections are encrypted, see README, section Security): renewing the key of a device without visiting it (now: remove it and add it again), forward secrecy (a handshake with temporary keys, so that recorded connections cannot be read when a key is stolen later), keys in a safer place than a text file (a secret store of the system), encrypting the recordings and the known faces on the disk, and protecting the control port (`record_now`) and the updater messages the same way. Not tested on Linux yet beyond the unit tests (the CI), and not tested on a Raspberry Pi (the encryption runs in software there, a Pi 3 should manage a few cameras, but this is not measured).
 - [ ] **Recordings, next steps** a way to save from a display (a key on the display, so the people in the house can do it without a computer), a list and download of the recordings in the web interface, other video formats (MP4 in browsers), and finishing a file that was left unfinished by a crash (the AVI index is written at the end). The control port is not authenticated (it only listens on this computer).
 - [ ] Hardware section of the README ("coming soon").
 

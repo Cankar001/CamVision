@@ -47,6 +47,26 @@ Client::Client(const ClientConfig &config)
 	CAM_LOG_INFO("================================================================");
 
 	m_Socket = Core::Socket::Create();
+	if (!m_Config.Key.empty())
+	{
+		Byte key[Core::crypto::KEY_BYTES];
+		if (Core::HexToBytes(m_Config.Key, key, Core::crypto::KEY_BYTES))
+		{
+			// Everything goes through the secure socket from now on: the server is only talked to with the key, and all messages are encrypted.
+			m_Socket = Core::SecureSocket::CreateClient(m_Socket, key);
+			m_Secure = true;
+			CAM_LOG_INFO("Device key            : set (id {}), the connection is encrypted", Core::KeyIdToString(Core::DeviceKeyId(key)));
+		}
+		else
+		{
+			CAM_LOG_ERROR("The setting 'key' is not a valid key (it must have 64 hex characters, as CamServer --add_device prints it). Starting without a key.");
+		}
+	}
+	else
+	{
+		CAM_LOG_WARN("No device key (setting 'key'): the connection is not encrypted, and the server must run with auth = false.");
+	}
+
 	if (!m_Socket->Open(true, m_Config.ServerIP, m_Config.Port))
 	{
 		CAM_LOG_ERROR("Socket could not be opened!");
@@ -167,6 +187,7 @@ void Client::NetworkLoop()
 			if (since_ms(connect_start) >= CONNECT_TIMEOUT_MS)
 			{
 				CAM_LOG_ERROR("Fatal error: Could not connect to server!");
+				CAM_LOG_ERROR(m_Secure ? "The key may not be the key of a camera of this server (see 'CamServer --list_devices'), or the server is not reachable." : "If the server requires device keys (the default), add the key of this camera to client.cfg: 'CamServer --add_device=camera --name=...' prints it.");
 				m_Running = false;
 				m_NetworkThreadFinished = true;
 				return;

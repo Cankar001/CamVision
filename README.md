@@ -90,6 +90,8 @@ cp CamServer/server.cfg.example CamServer/server.cfg
 bin/Release/CamServer
 ```
 
+**Devices need a key:** the server only talks to cameras and displays, which have their own key (see [Security](#security)). Before a camera or a display can connect, add it on the computer of the server: `bin/Release/CamServer --add_device=camera --name="Front door"` prints the line `key = ...` for the `client.cfg` of the camera (for a display, use `--add_device=display` and `display.cfg`).
+
 Notes for the camera client:
 
 - **Camera index:** it is the number of the `/dev/videoN` device. Run `v4l2-ctl --list-devices` to see the cameras. A USB camera often shows up twice (`/dev/video0` for the image, `/dev/video1` for metadata), use the first one. The client logs `Camera N: using backend ...` when the camera works.
@@ -136,6 +138,35 @@ journalctl -u camvision-client -f      # shows the log
 | `Camera N: could not be opened ...` | Wrong `camera_index`, no permission for `/dev/videoN` (see above), or the camera is used by another program. |
 | `Could not connect to server` | Check `server_ip` and `server_port`, the server must be running, and UDP on the server port must be allowed by the firewall of the server. |
 | `Gtk-WARNING: cannot open display` | There is no desktop session. Set `headless = true` (client) or `preview = false` (server). |
+
+# Security
+
+Cameras and displays talk to the server over the network (UDP). Without protection, everybody in the network could connect a display and watch all cameras, or send pictures as a camera, and everybody who can see the network traffic could read the pictures. That is why the connections are **authenticated and encrypted**. It is turned on by default (`auth = true` in `server.cfg`).
+
+**How you use it:** every camera and every display gets its own key. You make the keys on the computer of the server:
+
+```shell
+CamServer --add_device=camera --name="Front door"      # prints "key = ..." for client.cfg of this camera
+CamServer --add_device=display --name="Living room"    # prints "key = ..." for display.cfg of this display
+CamServer --list_devices                               # the devices (never the keys)
+CamServer --remove_device="Front door"                 # a lost or stolen device: its key stops working
+```
+
+1. Run `CamServer --add_device=...` for every device. The keys are stored in `CamServer/devices.cfg` (a secret, it is ignored by git).
+2. Copy the printed `key = ...` line into `client.cfg` (camera) or `display.cfg` (display) **on that device**. Do it over a safe way (typing it, a USB stick, `scp`), not by email or chat.
+3. Start everything as usual. The server does not have to be restarted when devices are added or removed, it notices the change within seconds. A device, which is removed, is disconnected.
+
+**What this protects against:** somebody in the same network (or on the way between the devices and the server) can neither read the pictures nor the messages, cannot change them, cannot record and replay them, and cannot connect as a camera or a display without a key. A key of a display cannot be used as a camera and the other way around, and a camera always has the name it was given with `--add_device` (it cannot pretend to be another camera). A message without a valid key gets no answer at all.
+
+**How it works:** the key is never sent. A device says "hello" with the id of its key (a hash, which tells nothing about the key) and a random number, the server answers with a random number of its own. Both calculate two new keys (one for each direction) out of the device key and the two random numbers, so every connection has its own keys, and recorded messages of an earlier connection are useless. All messages are then sealed with AES-256-GCM (encryption and a signature in one, from Windows CNG and from OpenSSL, nothing is implemented by hand), with a counter that makes every message unique, and the server only accepts every counter once. Only the real server knows the key, so an answer which opens proves that the server is the real one, too. A device, which connects, only replaces its old connection, after it proved with a message that it knows the key (somebody who sends a "hello" in the name of a device cannot cut it off).
+
+**What it does not do (yet):**
+- It does not hide *that* there is a connection, and its size and timing (how many pictures per second).
+- The key of a device is stored as text on the device, and in `devices.cfg` on the server. Whoever gets the key (or the file) can pretend to be this device, until it is removed. There is no automatic renewal of keys. A recorded connection can be read later by somebody who gets the key afterwards (there is no forward secrecy).
+- The recordings and the known faces on the server are not encrypted on the disk, the emails go as the mail server allows it.
+- The updater has its own protection (the updates are signed, see Updater), its messages are not encrypted (the updates are not secret).
+- Somebody who can flood the network can disturb the connections, as always with UDP.
+- `auth = false` in `server.cfg` turns it all off (everybody can connect, nothing is encrypted), for a trusted network, and for programs without keys. A camera or display **without** a key does not work with a server which requires keys, and the other way around.
 
 # Recordings
 
@@ -219,7 +250,7 @@ The camera client and the server are configured with a simple settings file and/
 The complete list with explanations is in the example files, copy them and edit the copy:
 
 - [CamClient/client.cfg.example](CamClient/client.cfg.example): server address and port, camera index and size, headless mode, JPEG quality and bandwidth tuning (`send_width`, `max_fps`).
-- [CamServer/server.cfg.example](CamServer/server.cfg.example): port, minutes of video kept per camera, timeout for dead clients, preview windows.
+- [CamServer/server.cfg.example](CamServer/server.cfg.example): port, minutes of video kept per camera, timeout for dead clients, preview windows, the device keys (`auth`, `devices_file`).
 
 Every program reads its settings file (`client.cfg`, `server.cfg`, `display.cfg`, ...) from its project folder (`CamClient`, `CamServer`, ...). A CamClient, which was installed by the updater, runs in the folder it was installed to (`install_path`) and reads `client.cfg` from there.
 

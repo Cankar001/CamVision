@@ -28,6 +28,12 @@ struct DisplayClientConfig
 	std::string Name = "Display #1";
 
 	/// <summary>
+	/// The key of this device (64 hex characters), which the server made with CamServer --add_device. With it, the connection to the server is
+	/// authenticated and encrypted. Without it, the messages are sent as they are, which only works with a server, which has the authentication turned off.
+	/// </summary>
+	std::string Key;
+
+	/// <summary>
 	/// The name of the one camera, which this display shows (fullscreen). Empty shows all cameras next to each other.
 	/// </summary>
 	std::string Camera;

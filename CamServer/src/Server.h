@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Cam-Core.h>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -77,6 +78,17 @@ struct ServerConfig
 	/// Seconds without any message after which a client is considered dead and removed (its frames are freed). 0 disables the timeout.
 	/// </summary>
 	uint32 ClientTimeoutSeconds = 15;
+
+	/// <summary>
+	/// Only devices (cameras and displays) with a key of the list of devices may connect, everything is encrypted. If this is off, everybody in the network
+	/// can connect as a camera (and send pictures) or as a display (and see all cameras), and everything is sent as it is.
+	/// </summary>
+	bool RequireAuth = true;
+
+	/// <summary>
+	/// The file with the devices and their keys (see Core::DeviceRegistry, and CamServer --add_device).
+	/// </summary>
+	std::string DevicesFile = "devices.cfg";
 };
 
 /// <summary>
@@ -273,6 +285,14 @@ private:
 
 	ServerConfig m_Config;
 	Core::Socket *m_Socket = nullptr;
+
+	// The devices, which may connect, and the socket, which checks and encrypts everything (m_Socket is this socket, if the authentication is on).
+	std::unique_ptr<Core::DeviceRegistry> m_Devices;
+	Core::SecureSocket *m_Secure = nullptr;
+
+	// When a device with the wrong key was last reported (by address), so a device, which keeps trying, does not flood the log.
+	std::map<uint64, int64> m_RefusalWarnings;
+	bool ShouldWarnAboutRefusal(Core::addr_t addr);
 
 	uint32 m_Version;
 	bool m_Running = true;

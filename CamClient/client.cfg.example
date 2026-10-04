@@ -5,7 +5,14 @@
 server_ip = 127.0.0.1
 server_port = 45645
 
-# Name of this camera, shown as title of the preview window on the server.
+# The key of this camera. Make it on the computer of the server with
+#   CamServer --add_device=camera --name="Front door"
+# which prints the lines to put here. With the key, the connection to the server is authenticated and encrypted. The server does not talk to a camera
+# without a key (unless auth = false in server.cfg). The key is a secret: whoever has it can pretend to be this camera.
+key =
+
+# Name of this camera, shown as title of the preview window on the server. With device keys, the server uses the name, which the camera got with
+# --add_device, and ignores this setting.
 name = Client #1
 
 # Index of the camera. On Windows this is the position in the DirectShow device list, e.g. run

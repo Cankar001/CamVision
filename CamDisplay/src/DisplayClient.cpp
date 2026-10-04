@@ -35,6 +35,25 @@ DisplayClient::DisplayClient(const DisplayClientConfig &config)
 	CAM_LOG_INFO("================================================================");
 
 	m_Socket = Core::Socket::Create();
+	if (!config.Key.empty())
+	{
+		Byte key[Core::crypto::KEY_BYTES];
+		if (Core::HexToBytes(config.Key, key, Core::crypto::KEY_BYTES))
+		{
+			// Everything goes through the secure socket from now on: the server is only talked to with the key, and all messages are encrypted.
+			m_Socket = Core::SecureSocket::CreateClient(m_Socket, key);
+			CAM_LOG_INFO("Device key            : set (id {}), the connection is encrypted", Core::KeyIdToString(Core::DeviceKeyId(key)));
+		}
+		else
+		{
+			CAM_LOG_ERROR("The setting 'key' is not a valid key (it must have 64 hex characters, as CamServer --add_device prints it). Starting without a key.");
+		}
+	}
+	else
+	{
+		CAM_LOG_WARN("No device key (setting 'key'): the connection is not encrypted, and the server must run with auth = false. 'CamServer --add_device=display --name=...' makes a key.");
+	}
+
 	if (!m_Socket->Open(true, config.ServerIP, config.Port))
 	{
 		CAM_LOG_ERROR("Socket could not be opened!");
