@@ -1,6 +1,29 @@
 # CamVision
 
-CamVision is an open source security camera project. It uses OpenCV for image analysis and has a server/client architecture. Each client can either be a camera device or a display. Camera clients analyze the footage locally with opencv, and send the frames to the server, if movement is detected. The server stores the video and also sends the frames to all registered display clients, which show the video on connected monitors.
+CamVision is an open source security camera system for the home network. Cameras (a PC with a webcam, a Raspberry Pi with a USB camera) send their pictures to a server. The server keeps the last minutes of every camera in memory, records video, recognizes faces and shows everything on displays and in a web UI. It is written in C++17 with OpenCV and runs on Windows and Linux (including the Raspberry Pi).
+
+# Features
+
+**Cameras and displays**
+- **Camera client** (`CamClient`): captures a camera, compresses the pictures as JPEG and sends them to the server. It can run without a window (headless), full screen, with a frame rate limit and a smaller picture size for weak devices or slow Wi-Fi.
+- **Display client** (`CamDisplay`): shows the live pictures of all cameras (or one) full screen on a connected monitor, with the faces marked. Several Raspberry Pis can be placed in different rooms, each with its own role: a camera or a display.
+- **Secure by default:** every device has its own key. The connections are authenticated and encrypted, and a device without a valid key cannot connect (see Security).
+
+**Server**
+- **Buffer:** the last N minutes of every camera are kept in memory (a ring buffer), so a camera needs no large disk.
+- **Save on demand:** save the buffer of one or all cameras as a video file at any time, from the command line, a key, the web UI or the remote control.
+- **Scheduled recording:** record continuously at fixed times (for example every night, or while you are on vacation), with automatic cleanup of old videos by age and by disk size.
+- **Face detection and recognition:** finds the faces in the pictures and recognizes the people you added. The boxes and names are drawn into the live pictures and into saved videos.
+- **Unknown person alerts:** when an unknown person is seen, the server can save the last minutes automatically, store a snapshot, and send an email with the picture.
+- **Remote control:** a WebSocket with JSON commands for scripts, home automation and the web UI.
+
+**Web UI** (`CamWeb` and `CamWebBackend`)
+- Login, overview of cameras, displays and devices, **live view** of every camera, saving videos with one click, a list of the recordings with download, adding and removing device keys, and the settings of the connection to the server. It is hosted on your own machine behind a reverse proxy (see [HOSTING.md](HOSTING.md)).
+
+**Operation**
+- **Self-updater:** ship new camera client builds to all devices by dropping them into a folder on the update server. The updates are signed, and the server rebuilds the update by itself when the folder changes (see Updater).
+- **Configuration** with simple settings files and command line arguments, `--help` in the server, the camera client and the display.
+- **Tests** for the shared code and the server, run on Windows and Linux in GitHub Actions.
 
 # Getting started
 
@@ -152,7 +175,7 @@ CamServer --list_devices                               # the devices (never the 
 CamServer --remove_device="Front door"                 # a lost or stolen device: its key stops working
 ```
 
-1. Run `CamServer --add_device=...` for every device. The keys are stored in `CamServer/devices.cfg` (a secret, it is ignored by git).
+1. Run `CamServer --add_device=...` for every device. The keys are stored in `CamServer/devices.cfg`.
 2. Copy the printed `key = ...` line into `client.cfg` (camera) or `display.cfg` (display) **on that device**. Do it over a safe way (typing it, a USB stick, `scp`), not by email or chat.
 3. Start everything as usual. The server does not have to be restarted when devices are added or removed, it notices the change within seconds. A device, which is removed, is disconnected.
 
@@ -160,7 +183,7 @@ CamServer --remove_device="Front door"                 # a lost or stolen device
 
 **How it works:** the key is never sent. A device says "hello" with the id of its key (a hash, which tells nothing about the key) and a random number, the server answers with a random number of its own. Both calculate two new keys (one for each direction) out of the device key and the two random numbers, so every connection has its own keys, and recorded messages of an earlier connection are useless. All messages are then sealed with AES-256-GCM (encryption and a signature in one, from Windows CNG and from OpenSSL, nothing is implemented by hand), with a counter that makes every message unique, and the server only accepts every counter once. Only the real server knows the key, so an answer which opens proves that the server is the real one, too. A device, which connects, only replaces its old connection, after it proved with a message that it knows the key (somebody who sends a "hello" in the name of a device cannot cut it off).
 
-**What it does not do (yet):**
+**Limits:**
 - It does not hide *that* there is a connection, and its size and timing (how many pictures per second).
 - The key of a device is stored as text on the device, and in `devices.cfg` on the server. Whoever gets the key (or the file) can pretend to be this device, until it is removed. There is no automatic renewal of keys. A recorded connection can be read later by somebody who gets the key afterwards (there is no forward secrecy).
 - The recordings and the known faces on the server are not encrypted on the disk, the emails go as the mail server allows it.
@@ -184,6 +207,8 @@ The server keeps the last `backup_minutes` (5 by default) of every camera in mem
 **The disk:** old videos are deleted automatically, after `record_keep_days` days (14 by default) and when all videos together are larger than `record_max_gb` gigabytes (20 by default, the oldest ones first). Set them to 0 to keep everything, but then watch the disk: a camera produces around 4 to 10 GB per day. Stop the server with `Ctrl+C` or `CamServer --control_stop`, so that the file, which is being written, is finished (otherwise the last file may not be playable).
 
 # Remote control
+
+> The web UI ([CamWeb](CamWeb) with its backend [CamWebBackend](CamWebBackend)) uses this remote control. How to host it: [HOSTING.md](HOSTING.md).
 
 The server has a **WebSocket** for remote control. Over it, a program (a web page, a script, a phone app, a home automation) can control the server with JSON commands. The first command saves the buffer of one or all cameras to disk as a video file, more commands show what is going on and manage the devices.
 
@@ -211,6 +236,7 @@ ws.onopen = () => {
 | `status` | | The state of the server: cameras (with the buffered video), displays, recording settings, the number of devices. |
 | `cameras` | | The connected cameras: name, address, buffered frames and seconds, when the camera was last heard of. |
 | `displays` | | The connected displays. |
+| `snapshot` | `camera` (name), `after` (frame number the caller already has), `faces` (default `true`) | The newest picture of a camera as a JPEG in Base64 (`{"camera": "Front door", "frame": 1234, "jpeg": "..."}`), as the displays get it: with the faces and the names of known people drawn into it (`faces: false` gives the plain picture; `face_on_displays = false` turns the drawing off). For live views (the web backend polls it). If there is no newer picture than `after`, the answer is `{"frame": 1234, "unchanged": true}` without a picture. |
 | `recordings` | `limit` (default 50, at most 500) | The newest video files in the recordings folder, with size and time (seconds since 1970). |
 | `devices` | | The cameras and displays with a key (name, role, key id, never the key). |
 | `device_add` | `role` (`camera` or `display`), `name` | Makes a key for a new device and returns it (see Security). Only for programs on the computer of the server: the connection is not encrypted. |
@@ -256,6 +282,8 @@ It uses the models YuNet (detection) and SFace (recognition) of OpenCV, no other
 3. **Turn it on:** `faces = true` in `server.cfg` (or `--faces=true`). The other settings are explained in [CamServer/server.cfg.example](CamServer/server.cfg.example).
 
 **Faces on the displays:** the server draws the boxes and names into the pictures before it sends them to the displays, so every display shows the same as the preview of the server. The pictures keep their frame rate, the boxes are those of the latest analysis (up to `1 / face_fps` seconds old, and they disappear, if the analysis stops for 2 seconds). The server draws and compresses a picture once, even if several displays show it. This costs nothing noticeable in a Release build, but a lot in a Debug build. `face_on_displays = false` sends the plain pictures instead.
+
+**Faces in saved videos:** when the buffer of a camera is saved (the `save` command of the remote control, the Save button of the web UI, `--record_now`, an unknown person), the server draws the same boxes and names into the frames. The analysis runs `face_fps` times per second, so every frame gets the result of the analysis that is nearest to it in time (not more than 1.5 seconds away; frames without a face stay as they are). The frames with a face are decoded and compressed again (JPEG quality 85, on all processor cores), so saving takes longer: about 15 seconds for one minute of video on a normal computer. `face_on_saved_clips = false` saves the pictures of the camera as they are. The recording on a schedule (`record_schedule`) is not affected: it writes the frames as they arrive.
 
 **Check the setup without a camera:** `CamServer --face_test=photo.jpg` analyzes one photo, prints the faces it finds (and who they are), and stores `photo.jpg.faces.jpg` with the faces marked. Relative paths, like the photo, are relative to the `CamServer` folder, the working directory of the server. A face, which is not recognized, shows the best similarity and the needed value, so `face_match_threshold` can be tuned.
 
@@ -331,32 +359,9 @@ New tests are added with `TEST(Suite, Name) { ... }` in a file in `CamTests/src`
 
 The tests run on every push and pull request in GitHub Actions on Windows and Linux, in Debug and Release (`.github/workflows/tests.yml`).
 
-# Features
-
-The project currently supports these features:
-
-- self-updater: The self updater enables you, to very easily ship new versions to all in-use cameras or displays. You only have to drag-and-drop the update package into a pre-defined folder on the server, the running server listens to this pre-defined folder and recognizes a file system change, re-assembles the update into a transferrable package and ships it to all registered clients fully automated.
-- Server/Client system for the camera: The Server/client system has the advantage, that each camera device doesn't have to have a large drive for the videos. It sends the camera feed over the native socket implementation to the server. The server stores the video feed of each camera in a separate ring queue, which has a configurable size. This enables the user to store the last N minutes on demand.
-- Different client types: This system currently supports two different client types. The first type is a camera client, which records each frame from a connected camera and sends the frames to the server. The second type is a display client (see "Displays"), which gets a live feed from the server from each camera and can display the camera feed on a connected display. The system has these two different types, because not every camera might have a display connected directly to it. In this way, you can setup multiple raspberrys, which are located at different locations and server different roles.
-
-# Planned features
-
-- face detection: planned to support face detection with the Mediapipe library from Google soon.
-- face recognition: planned to support face recognition with OpenCV soon.
-- web interface: planned to create a web interface (with Laravel and React/Vue.js?)
-- Record X last minutes: The ring queue, in which the frames from each client are stored on the server already make this feature possible, but it is planned to create a command interface or a web UI, in which this can be enabled/disabled/triggered.
-- Record at specific time: planned to support recording at specific times (for example if the home owner is on vacation)
-
-# Hardware
-
-Hardware list is coming soon
-
 # Screenshots
 
-Currently I have built a very basic first prototype, including a very basic closure for the camera and for the display.
-
-In these pictures you can see the CamClient application running on a raspberry pi 3b, with the standard touch screen display from raspberry.
+The CamClient application running on a Raspberry Pi 3B with the standard Raspberry Pi touch screen, by day and by night:
 
 ![day-time](/Images/client_screenshot_day.jpeg?raw=true "picture from the client at day-time")
 ![night-time](/Images/client_screenshot_night.jpeg?raw=true "picture from the client at night-time")
-
