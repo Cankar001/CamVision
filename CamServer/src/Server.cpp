@@ -1749,6 +1749,79 @@ void Server::RegisterCommands()
 		return report.SavedFiles() > 0;
 	});
 
+	m_Commands->Register("snapshot", "the newest picture of a camera as a JPEG (Base64), for a live view, as the displays get it (faces and names drawn into it). args: camera (name), after (the frame number, which the caller has already; if there is no newer picture, the answer has \"unchanged\": true and no picture), faces (default true; false: the plain picture)",
+		[this](const Json &args, const Context &, Json *result, std::string *error)
+	{
+		std::string camera = args.Get("camera").AsString();
+		int64 after = args.Get("after").AsInt(0);
+
+		// The same picture as on the displays: with the faces (and the names of the known people) drawn into it, as long as the analysis is up to date.
+		bool want_faces = args.Get("faces").AsBool(true) && m_FaceAnalyzer && m_Config.Faces.DrawOnDisplays;
+		const int64 faces_valid_ms = 2000;
+
+		EncodedFrame frame;
+		uint32 frame_number = 0;
+		std::vector<FaceResult> faces;
+		{
+			std::lock_guard<std::mutex> lock(m_ClientsMutex);
+			for (auto &client : m_Clients)
+			{
+				if (client->FrameTitle == camera)
+				{
+					frame = client->LatestFrame;
+					frame_number = client->LatestFrameNumber;
+					if (want_faces && Core::QueryMS() - client->FacesUpdatedMS <= faces_valid_ms)
+					{
+						faces = client->Faces;
+					}
+
+					break;
+				}
+			}
+		}
+
+		if (frame_number == 0 || !frame || frame->empty())
+		{
+			*error = "there is no picture of the camera \"" + camera + "\" (it is not connected, or has not sent a picture yet)";
+			return false;
+		}
+
+		(*result)["camera"] = camera;
+		(*result)["frame"] = frame_number;
+		if ((int64)frame_number == after)
+		{
+			(*result)["unchanged"] = true;
+			return true;
+		}
+
+		if (!faces.empty())
+		{
+			// The received frame is never changed (it is shared), the faces are drawn into a copy. If that does not work, the plain picture is sent.
+			try
+			{
+				cv::Mat image = cv::imdecode(*frame, cv::IMREAD_COLOR);
+				if (!image.empty())
+				{
+					DrawFaces(image, faces, m_FaceAnalyzer->CanRecognize());
+					auto marked = std::make_shared<std::vector<uchar>>();
+					if (cv::imencode(".jpg", image, *marked, { cv::IMWRITE_JPEG_QUALITY, 80 }))
+					{
+						frame = marked;
+					}
+				}
+			}
+			catch (const cv::Exception &e)
+			{
+				CAM_LOG_ERROR("Could not draw the faces into the picture for the remote control: {}", e.what());
+			}
+		}
+
+		// Encoded outside of the lock.
+		(*result)["jpeg"] = Core::websocket::Base64Encode((const Byte *)frame->data(), (uint32)frame->size());
+		(*result)["faces"] = (uint32)faces.size();
+		return true;
+	});
+
 	m_Commands->Register("recordings", "the newest video files in the recordings folder. args: limit (default 50, at most 500)",
 		[this](const Json &args, const Context &, Json *result, std::string *error)
 	{
