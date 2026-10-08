@@ -79,7 +79,48 @@ void Camera::OpenStream()
 Camera::Camera(const CameraConfig &config)
 	: m_FlipImage(config.FlipImage), m_Index(config.Index), m_Width(config.Width), m_Height(config.Height)
 {
+	m_Fullscreen = config.Fullscreen;
 	OpenStream();
+}
+
+void Camera::EnsureWindow()
+{
+	if (m_WindowCreated)
+	{
+		return;
+	}
+
+	if (m_Fullscreen)
+	{
+		// Like the display application: the whole screen, without a border or a title bar.
+		cv::namedWindow("Frame", cv::WINDOW_NORMAL);
+		cv::setWindowProperty("Frame", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+	}
+	else
+	{
+		// Resizable window, which keeps the aspect ratio of the frame instead of stretching it.
+		cv::namedWindow("Frame", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
+	}
+
+	m_WindowCreated = true;
+}
+
+void Camera::HandleKey(int key)
+{
+	// On some systems waitKey returns more than the key code in the higher bits.
+	key &= 0xFF;
+	if (key == 27 || key == 'q')
+	{
+		Release();
+	}
+	else if (key == 'z')
+	{
+		ZoomIn();
+	}
+	else if (key == 'x')
+	{
+		ZoomOut();
+	}
 }
 
 Camera::~Camera()
@@ -230,28 +271,14 @@ Byte *Camera::Show(uint32 frameIndex, uint32 *out_frame_size, uint32 *out_frame_
 	}
 
 	cv::Mat frame = m_ImageQueue.Get(frameIndex);
-	// Resizable window, which keeps the aspect ratio of the frame instead of stretching it.
-	cv::namedWindow("Frame", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
-	m_WindowCreated = true;
+	EnsureWindow();
 	cv::imshow("Frame", frame);
 
 	*out_frame_size = (uint32)(frame.total() * frame.elemSize());
 	*out_frame_width = frame.cols;
 	*out_frame_height = frame.rows;
 
-	char key = cv::waitKey(1);
-	if (key == 'q')
-	{
-		Release();
-	}
-	else if (key == 'z')
-	{
-		ZoomIn();
-	}
-	else if (key == 'x')
-	{
-		ZoomOut();
-	}
+	HandleKey(cv::waitKey(1));
 
 	Byte *frame_data = new Byte[*out_frame_size];
 	memcpy(frame_data, frame.data, *out_frame_size);
@@ -284,24 +311,10 @@ Byte *Camera::ShowLive(uint32 *out_frame_size, uint32 *out_frame_width, uint32 *
 	*out_frame_width = frame.cols;
 	*out_frame_height = frame.rows;
 
-	// Resizable window, which keeps the aspect ratio of the frame instead of stretching it.
-	cv::namedWindow("Frame", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
-	m_WindowCreated = true;
+	EnsureWindow();
 	cv::imshow("Frame", frame);
 
-	char key = cv::waitKey(1);
-	if (key == 'q')
-	{
-		Release();
-	}
-	else if (key == 'z')
-	{
-		ZoomIn();
-	}
-	else if (key == 'x')
-	{
-		ZoomOut();
-	}
+	HandleKey(cv::waitKey(1));
 
 	Byte *frame_data = new Byte[*out_frame_size];
 	memcpy(frame_data, frame.data, *out_frame_size);

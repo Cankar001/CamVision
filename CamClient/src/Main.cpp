@@ -60,6 +60,7 @@ static void PrintHelp()
 		"  --camera_index=N               Which camera to use.\n"
 		"  --camera_width=N               --camera_height=N\n"
 		"  --flip_image=true|false        Turns the picture around.\n"
+		"  --fullscreen=true|false        Shows the video fullscreen without a border, like CamDisplay. Esc (or Q) closes it and ends the client.\n"
 		"  --headless=true|false          No windows, the frames are only sent to the server.\n"
 #if FRAME_ANALYSIS
 		"\n"
@@ -111,6 +112,7 @@ int main(int argc, char *argv[])
 	config.Camera.Width = (uint32)settings.GetInt("camera_width", config.Camera.Width);
 	config.Camera.Height = (uint32)settings.GetInt("camera_height", config.Camera.Height);
 	config.Camera.FlipImage = settings.GetBool("flip_image", config.Camera.FlipImage);
+	config.Camera.Fullscreen = settings.GetBool("fullscreen", config.Camera.Fullscreen);
 
 #if FRAME_ANALYSIS // FRAME ANALYSIS (movement and face detection in the camera client): switch all blocks with this tag to "#if 1" to enable it
 	FrameAnalysisConfig &analysis = config.Analysis;

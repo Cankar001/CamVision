@@ -31,6 +31,10 @@ headless = false
 # Rotates the image by 180 degrees.
 flip_image = false
 
+# Shows the video fullscreen without a border, like the display application. Esc (or Q) closes it and ends the client.
+# Has no effect with headless = true.
+fullscreen = false
+
 # Frames per second announced to the server (sizes its backup buffer).
 fps = 30
 

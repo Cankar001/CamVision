@@ -18,6 +18,11 @@ struct CameraConfig
 	uint32 Height = 720;
 
 	bool FlipImage = false;
+
+	/// <summary>
+	/// Shows the video in a fullscreen window without a border, like the display application does. Esc closes it (and ends the client).
+	/// </summary>
+	bool Fullscreen = false;
 };
 
 class Camera
@@ -101,6 +106,16 @@ public:
 private:
 
 	/// <summary>
+	/// Creates the preview window (once), fullscreen if configured, otherwise resizable.
+	/// </summary>
+	void EnsureWindow();
+
+	/// <summary>
+	/// Handles the keys of the preview window: Esc and q close it, z and x zoom.
+	/// </summary>
+	void HandleKey(int key);
+
+	/// <summary>
 	/// Opens the camera stream and applies resolution and format.
 	/// </summary>
 	void OpenStream();
@@ -137,6 +152,7 @@ private:
 	uint32 m_FrameCount = 0;
 	int32 m_Format = 0;
 	bool m_FlipImage = false;
+	bool m_Fullscreen = false;
 	float m_Scale = 1.0f;
 
 	bool m_CameraRunning = true;
