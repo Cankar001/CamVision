@@ -1,0 +1,26 @@
+# systemd unit of the CamVision web backend.
+#   sudo cp deploy/camvision-web.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now camvision-web
+# Adjust User and the paths. The settings are read from the .env file in WorkingDirectory.
+
+[Unit]
+Description=CamVision web backend (API, login, live stream bridge to CamServer)
+After=network.target
+
+[Service]
+Type=simple
+User=camvision
+WorkingDirectory=/opt/camvision/CamWebBackend
+ExecStart=/usr/bin/node --env-file=/opt/camvision/CamWebBackend/.env dist/index.js
+Restart=on-failure
+RestartSec=3
+
+# The backend only needs to read its own folder and write its data folder (and read the token file / recordings, if set in .env).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/camvision/CamWebBackend/data
+
+[Install]
+WantedBy=multi-user.target

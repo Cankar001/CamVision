@@ -1,0 +1,52 @@
+.page {
+  max-width: 960px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.back {
+  align-self: flex-start;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.back:hover {
+  color: var(--foreground);
+}
+
+.title {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.info {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  font-size: 14px;
+}
+
+.save {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.minutes {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.minutesInput {
+  width: 64px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 4px 8px;
+}

@@ -1,0 +1,120 @@
+/* Building blocks shared by the screens: cards, buttons, inputs, notices, badges. */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.button {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 14px;
+  font-weight: 500;
+  background: none;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.secondary {
+  border-color: var(--border);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.danger {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.danger:hover:not(:disabled) {
+  background: var(--danger-hover);
+}
+
+.input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 8px 12px;
+  font-size: 14px;
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--accent);
+}
+
+.mono {
+  font-family: var(--font-geist-mono), monospace;
+}
+
+.notice {
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 14px;
+}
+
+.noticeError {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.noticeOk {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.noticeWarn {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 12px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--track);
+  color: var(--muted);
+}
+
+.badgeOn {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.badgeOn .dot {
+  background: var(--ok);
+}
+
+.muted {
+  color: var(--muted);
+}
