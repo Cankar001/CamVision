@@ -63,6 +63,8 @@ Tests: `npm test` (the API, the login, the stream and the bridge, against a fake
 
 ## Install it on the Ubuntu server
 
+> The full, step by step guide (CamServer as a service, Apache, certificates, firewall, updating, backups, troubleshooting) is [HOSTING.md](../HOSTING.md) in the root of the repository. This section is the short version.
+
 Everything on the same computer as CamServer. The paths below are examples.
 
 **1. Node.js 22**
