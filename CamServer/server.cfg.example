@@ -122,6 +122,12 @@ face_event_cooldown = 30
 # The pictures keep their frame rate, the boxes are those of the latest analysis (up to 1 / face_fps seconds old). false sends the plain pictures.
 face_on_displays = true
 
+# Draws the faces (boxes and names) into the videos, which are saved from the buffer of a camera (save in the web UI or the remote control,
+# --record_now, an unknown person). Every frame gets the boxes of the analysis, which is nearest to it in time (face_fps per second), and frames without a
+# face stay as they are. Drawing means decoding and compressing every frame with a face again, so saving a few minutes takes some seconds longer.
+# false saves the pictures of the camera as they are. (The recording on a schedule is not affected, it writes the frames as they arrive.)
+face_on_saved_clips = true
+
 # ---- Emails about unknown people (off by default) -------------------------------------------------------------------------------------------
 # Emails are sent for these events:
 #   - an unknown person is seen by a camera (with the picture, in which the face is marked). Needs the face analysis above (faces = true, with the

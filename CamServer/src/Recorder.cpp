@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <future>
+#include <thread>
 
 #include "Core/Log.h"
 
@@ -776,7 +778,7 @@ void Recorder::CloseSession(uint32 cameraId)
 	}
 }
 
-bool Recorder::SaveClip(const std::string &camera, const std::vector<RecordedFrame> &frames, const std::string &label, std::string *outPath, std::string *error)
+bool Recorder::SaveClip(const std::string &camera, const std::vector<RecordedFrame> &frames, const std::string &label, std::string *outPath, std::string *error, const FrameTransform &transform)
 {
 	if (frames.empty())
 	{
@@ -809,26 +811,65 @@ bool Recorder::SaveClip(const std::string &camera, const std::vector<RecordedFra
 		return false;
 	}
 
+	// With a transform, the frames are made on several threads, a few at a time (so the memory stays small), and written in their order.
+	const size_t window = transform ? std::max<size_t>(4, (size_t)std::thread::hardware_concurrency() * 2) : std::max<size_t>(frames.size(), 1);
+
 	int64 first_ms = 0, last_ms = 0;
-	for (const RecordedFrame &frame : frames)
+	bool write_failed = false;
+	for (size_t begin = 0; begin < frames.size() && !write_failed; begin += window)
 	{
-		uint32 frame_width = 0, frame_height = 0;
-		if (!frame.Data || !AviMjpegWriter::GetJpegSize(frame.Data->data(), (uint32)frame.Data->size(), &frame_width, &frame_height) || frame_width != width || frame_height != height)
+		size_t end = std::min(frames.size(), begin + window);
+
+		std::vector<RecordedFrame> converted;
+		converted.reserve(end - begin);
+		if (transform)
 		{
-			continue;
+			std::vector<std::future<RecordedFrame>> jobs;
+			jobs.reserve(end - begin);
+			for (size_t i = begin; i < end; ++i)
+			{
+				jobs.push_back(std::async(std::launch::async, transform, std::cref(frames[i])));
+			}
+
+			for (size_t i = 0; i < jobs.size(); ++i)
+			{
+				try
+				{
+					converted.push_back(jobs[i].get());
+				}
+				catch (...)
+				{
+					// A frame, which could not be changed, is written as it is.
+					converted.push_back(frames[begin + i]);
+				}
+			}
+		}
+		else
+		{
+			converted.assign(frames.begin() + begin, frames.begin() + end);
 		}
 
-		if (!writer.AddFrame(frame.Data->data(), (uint32)frame.Data->size()))
+		for (const RecordedFrame &frame : converted)
 		{
-			break;
-		}
+			uint32 frame_width = 0, frame_height = 0;
+			if (!frame.Data || !AviMjpegWriter::GetJpegSize(frame.Data->data(), (uint32)frame.Data->size(), &frame_width, &frame_height) || frame_width != width || frame_height != height)
+			{
+				continue;
+			}
 
-		if (writer.GetFrameCount() == 1)
-		{
-			first_ms = frame.TimeMS;
-		}
+			if (!writer.AddFrame(frame.Data->data(), (uint32)frame.Data->size()))
+			{
+				write_failed = true;
+				break;
+			}
 
-		last_ms = frame.TimeMS;
+			if (writer.GetFrameCount() == 1)
+			{
+				first_ms = frame.TimeMS;
+			}
+
+			last_ms = frame.TimeMS;
+		}
 	}
 
 	uint32 written = writer.GetFrameCount();

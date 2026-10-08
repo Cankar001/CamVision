@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <atomic>
 #include <set>
@@ -132,6 +133,16 @@ struct FrameAssembly
 	EncodedFrame Data;
 };
 
+/// <summary>
+/// The faces of one analysis, and the time (wall clock, like RecordedFrame::TimeMS) of the frame, which was analyzed. The history of these is how the faces
+/// get into the videos, which are saved from the buffer: every frame takes the analysis nearest in time.
+/// </summary>
+struct FaceSnapshot
+{
+	int64 TimeMS = 0;
+	std::vector<FaceResult> Faces;
+};
+
 struct ClientEntry
 {
 	Core::addr_t Address;
@@ -160,6 +171,11 @@ struct ClientEntry
 	/// </summary>
 	std::vector<FaceResult> Faces;
 	int64 FacesUpdatedMS = 0;
+
+	/// <summary>
+	/// The analyses of the last minutes (as long as the buffer of the frames), oldest first. Only kept, if the faces are drawn into saved videos.
+	/// </summary>
+	std::deque<FaceSnapshot> FaceHistory;
 	uint32 DroppedFrames = 0;
 
 	/// <summary>

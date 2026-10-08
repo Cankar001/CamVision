@@ -177,6 +177,7 @@ static void PrintHelp()
 		"  --face_score_threshold=F       --face_match_threshold=F         --face_detect_width=N\n"
 		"  --face_fps=N                   --face_on_displays=true|false    --face_event_cooldown=SECONDS\n"
 		"  --face_snapshots=true|false    --face_snapshot_path=path\n"
+		"  --face_on_saved_clips=true|false\n"
 		"\n"
 		"Recording:\n"
 		"  --recordings_path=path         --record_schedule=SCHEDULE       --record_cameras=A,B\n"
@@ -261,6 +262,7 @@ int main(int argc, char *argv[])
 	faces.DetectWidth = std::max(settings.GetInt("face_detect_width", faces.DetectWidth), 0);
 	faces.FPS = (uint32)std::max(settings.GetInt("face_fps", faces.FPS), 1);
 	faces.DrawOnDisplays = settings.GetBool("face_on_displays", faces.DrawOnDisplays);
+	faces.DrawOnSavedClips = settings.GetBool("face_on_saved_clips", faces.DrawOnSavedClips);
 	faces.Snapshots = settings.GetBool("face_snapshots", faces.Snapshots);
 	faces.SnapshotPath = settings.GetString("face_snapshot_path", faces.SnapshotPath);
 	faces.EventCooldownSeconds = (uint32)std::max(settings.GetInt("face_event_cooldown", faces.EventCooldownSeconds), 0);

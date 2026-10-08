@@ -1124,6 +1124,30 @@ static std::string TimestampString()
 	return buffer;
 }
 
+// The picture (JPEG) with the faces drawn into it. A copy: the received frame is shared and never changed. If that does not work, the plain picture.
+static EncodedFrame DrawFacesIntoJpeg(const EncodedFrame &jpeg, const std::vector<FaceResult> &faces, bool recognition, int quality)
+{
+	try
+	{
+		cv::Mat image = cv::imdecode(*jpeg, cv::IMREAD_COLOR);
+		if (!image.empty())
+		{
+			DrawFaces(image, faces, recognition);
+			auto marked = std::make_shared<std::vector<uchar>>();
+			if (cv::imencode(".jpg", image, *marked, { cv::IMWRITE_JPEG_QUALITY, quality }))
+			{
+				return marked;
+			}
+		}
+	}
+	catch (const cv::Exception &e)
+	{
+		CAM_LOG_ERROR("Could not draw the faces into the picture: {}", e.what());
+	}
+
+	return jpeg;
+}
+
 void Server::FaceLoop()
 {
 	struct Job
@@ -1132,6 +1156,7 @@ void Server::FaceLoop()
 		std::string Title;
 		EncodedFrame Frame;
 		uint32 Number;
+		int64 TimeMS;
 	};
 
 	const FaceConfig &config = m_Config.Faces;
@@ -1157,7 +1182,9 @@ void Server::FaceLoop()
 				uint64 address = client->Address.Value;
 				if (client->LatestFrame && client->LatestFrameNumber != last_number[address] && now - last_analysis_ms[address] >= interval_ms)
 				{
-					jobs.push_back({ address, client->FrameTitle, client->LatestFrame, client->LatestFrameNumber });
+					// The newest frame of the buffer is the one analyzed (both are set together).
+					int64 frame_ms = client->Frames.Size() > 0 ? client->Frames.At(client->Frames.Size() - 1).TimeMS : Recorder::NowMS();
+					jobs.push_back({ address, client->FrameTitle, client->LatestFrame, client->LatestFrameNumber, frame_ms });
 				}
 			}
 		}
@@ -1197,6 +1224,16 @@ void Server::FaceLoop()
 					{
 						client->Faces = faces;
 						client->FacesUpdatedMS = Core::QueryMS();
+						if (config.DrawOnSavedClips)
+						{
+							client->FaceHistory.push_back({ job.TimeMS, faces });
+							const int64 keep_ms = ((int64)m_Config.VideoBackupDuration + 1) * 60 * 1000;
+							while (!client->FaceHistory.empty() && client->FaceHistory.back().TimeMS - client->FaceHistory.front().TimeMS > keep_ms)
+							{
+								client->FaceHistory.pop_front();
+							}
+						}
+
 						break;
 					}
 				}
@@ -1372,7 +1409,14 @@ Server::SaveReport Server::SaveClips(uint32 minutes, const std::string &cameraFi
 	{
 		std::string Camera;
 		std::vector<RecordedFrame> Frames;
+
+		/// <summary>
+		/// The analyses of the faces in this time (copied, so the frames can be made without the lock).
+		/// </summary>
+		std::vector<FaceSnapshot> Faces;
 	};
+
+	const bool draw_faces = m_FaceAnalyzer && m_Config.Faces.DrawOnSavedClips;
 
 	std::vector<Clip> clips;
 	int64 from_ms = Recorder::NowMS() - (int64)minutes * 60 * 1000;
@@ -1396,6 +1440,11 @@ Server::SaveReport Server::SaveClips(uint32 minutes, const std::string &cameraFi
 				}
 			}
 
+			if (draw_faces)
+			{
+				clip.Faces.assign(client->FaceHistory.begin(), client->FaceHistory.end());
+			}
+
 			if (!clip.Frames.empty())
 			{
 				clips.push_back(std::move(clip));
@@ -1415,7 +1464,51 @@ Server::SaveReport Server::SaveClips(uint32 minutes, const std::string &cameraFi
 		SavedClip saved;
 		saved.Camera = clip.Camera;
 		saved.Frames = (uint32)clip.Frames.size();
-		saved.Ok = m_Recorder->SaveClip(clip.Camera, clip.Frames, label, &saved.Path, &saved.Error);
+
+		// The frames get the faces of the analysis nearest in time. The analysis runs a few times per second, so a face counts for the frames around it,
+		// but not longer than the analysis was stalled.
+		FrameTransform transform;
+		bool any_faces = false;
+		for (const FaceSnapshot &snapshot : clip.Faces)
+		{
+			any_faces = any_faces || !snapshot.Faces.empty();
+		}
+
+		if (draw_faces && any_faces)
+		{
+			const bool recognition = m_FaceAnalyzer->CanRecognize();
+			const int64 valid_ms = 1500;
+			transform = [&clip, recognition, valid_ms](const RecordedFrame &frame) -> RecordedFrame
+			{
+				const std::vector<FaceSnapshot> &history = clip.Faces;
+				auto next = std::lower_bound(history.begin(), history.end(), frame.TimeMS, [](const FaceSnapshot &snapshot, int64 time) { return snapshot.TimeMS < time; });
+				const FaceSnapshot *nearest = nullptr;
+				if (next != history.end())
+				{
+					nearest = &*next;
+				}
+
+				if (next != history.begin())
+				{
+					const FaceSnapshot *before = &*(next - 1);
+					if (!nearest || frame.TimeMS - before->TimeMS <= nearest->TimeMS - frame.TimeMS)
+					{
+						nearest = before;
+					}
+				}
+
+				if (!nearest || nearest->Faces.empty() || std::abs(nearest->TimeMS - frame.TimeMS) > valid_ms || !frame.Data)
+				{
+					return frame;
+				}
+
+				RecordedFrame marked = frame;
+				marked.Data = DrawFacesIntoJpeg(frame.Data, nearest->Faces, recognition, 85);
+				return marked;
+			};
+		}
+
+		saved.Ok = m_Recorder->SaveClip(clip.Camera, clip.Frames, label, &saved.Path, &saved.Error, transform);
 		report.Clips.push_back(saved);
 	}
 
@@ -1796,24 +1889,7 @@ void Server::RegisterCommands()
 
 		if (!faces.empty())
 		{
-			// The received frame is never changed (it is shared), the faces are drawn into a copy. If that does not work, the plain picture is sent.
-			try
-			{
-				cv::Mat image = cv::imdecode(*frame, cv::IMREAD_COLOR);
-				if (!image.empty())
-				{
-					DrawFaces(image, faces, m_FaceAnalyzer->CanRecognize());
-					auto marked = std::make_shared<std::vector<uchar>>();
-					if (cv::imencode(".jpg", image, *marked, { cv::IMWRITE_JPEG_QUALITY, 80 }))
-					{
-						frame = marked;
-					}
-				}
-			}
-			catch (const cv::Exception &e)
-			{
-				CAM_LOG_ERROR("Could not draw the faces into the picture for the remote control: {}", e.what());
-			}
+			frame = DrawFacesIntoJpeg(frame, faces, m_FaceAnalyzer->CanRecognize(), 80);
 		}
 
 		// Encoded outside of the lock.

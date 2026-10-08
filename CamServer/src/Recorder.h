@@ -7,6 +7,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -24,6 +25,11 @@ struct RecordedFrame
 	/// </summary>
 	int64 TimeMS = 0;
 };
+
+/// <summary>
+/// Changes a frame (for example draws into it) and returns the new frame.
+/// </summary>
+using FrameTransform = std::function<RecordedFrame(const RecordedFrame &)>;
 
 /// <summary>
 /// Writes JPEG frames into an AVI file (Motion JPEG). The frames are not decoded or encoded again, they are written as they are, so this is fast and
@@ -184,7 +190,9 @@ public:
 	/// <param name="label">Part of the file name, for example "last5min".</param>
 	/// <param name="outPath">Receives the path of the file.</param>
 	/// <param name="error">Receives the reason, if it failed.</param>
-	bool SaveClip(const std::string &camera, const std::vector<RecordedFrame> &frames, const std::string &label, std::string *outPath, std::string *error);
+	/// <param name="transform">Optional: changes a frame, before it is written (for example draws into it). It is called for several frames at the same time
+	/// (on several threads), and must return the frame it was given if it does not change it.</param>
+	bool SaveClip(const std::string &camera, const std::vector<RecordedFrame> &frames, const std::string &label, std::string *outPath, std::string *error, const FrameTransform &transform = nullptr);
 
 	/// <summary>
 	/// The current time in milliseconds since 1970.
