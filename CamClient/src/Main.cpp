@@ -36,8 +36,53 @@ static void OnStopSignal(int)
 	}
 }
 
+// --help: lists everything, which can be given on the command line. Every setting can also be written into client.cfg (without the leading "--").
+static void PrintHelp()
+{
+	std::cout <<
+		"CamClient - captures the camera and sends the video to the server.\n"
+		"\n"
+		"Usage: CamClient [--help] [--setting=value ...]\n"
+		"\n"
+		"Settings are read from client.cfg in the working directory (or --config=path). A --setting=value argument overrides the file.\n"
+		"\n"
+		"Options:\n"
+		"  --help                         Shows this text.\n"
+		"  --config=path                  Settings file (default: client.cfg).\n"
+		"  --server_ip=address            Address of the server.\n"
+		"  --server_port=N                Port of the server.\n"
+		"  --name=NAME                    Name of this camera.\n"
+		"  --key=HEX                      Key of this camera (made on the server with --add_device=camera).\n"
+		"  --fps=N                        Frames per second to send.\n"
+		"  --max_fps=N                    Upper limit of the frames per second (0 = none).\n"
+		"  --jpeg_quality=N               Quality of the sent pictures.\n"
+		"  --send_width=N                 Width of the sent pictures (0 = original size).\n"
+		"  --camera_index=N               Which camera to use.\n"
+		"  --camera_width=N               --camera_height=N\n"
+		"  --flip_image=true|false        Turns the picture around.\n"
+		"  --headless=true|false          No windows, the frames are only sent to the server.\n"
+#if FRAME_ANALYSIS
+		"\n"
+		"Frame analysis (movement and face detection):\n"
+		"  --analysis=true|false          --analysis_motion=true|false     --analysis_motion_min_area=F\n"
+		"  --analysis_motion_pixel_threshold=N     --analysis_faces=true|false     --analysis_face_model=path\n"
+		"  --analysis_face_every=N        --analysis_hold_seconds=N        --analysis_idle_fps=N\n"
+#endif
+		<< std::endl;
+}
+
 int main(int argc, char *argv[])
 {
+	for (int i = 1; i < argc; ++i)
+	{
+		std::string argument(argv[i]);
+		if (argument == "--help" || argument == "-h" || argument == "-?" || argument == "/?")
+		{
+			PrintHelp();
+			return 0;
+		}
+	}
+
 	Core::Init();
 
 	// Started from the build folder, the working directory is the CamClient folder (client.cfg). Installed by the updater, it stays in its own folder.

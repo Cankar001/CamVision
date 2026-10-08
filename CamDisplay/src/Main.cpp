@@ -25,8 +25,47 @@ static void OnStopSignal(int)
 /// (exit code 0, or 1 if no camera picture was received within --snapshot_timeout=SECONDS, default 30). --snapshot_min_cameras=N waits until N cameras
 /// are there, for testing the layout with several cameras.
 /// </summary>
+// --help: lists everything, which can be given on the command line. Every setting can also be written into display.cfg (without the leading "--").
+static void PrintHelp()
+{
+	std::cout <<
+		"CamDisplay - shows the pictures of the cameras full screen. Esc (or Q) shuts it down.\n"
+		"\n"
+		"Usage: CamDisplay [--help] [--setting=value ...]\n"
+		"\n"
+		"Settings are read from display.cfg in the working directory (or --config=path). A --setting=value argument overrides the file.\n"
+		"\n"
+		"Options:\n"
+		"  --help                         Shows this text.\n"
+		"  --config=path                  Settings file (default: display.cfg).\n"
+		"  --server_ip=address            Address of the server.\n"
+		"  --server_port=N                Port of the server.\n"
+		"  --name=NAME                    Name of this display.\n"
+		"  --key=HEX                      Key of this display (made on the server with --add_device=display).\n"
+		"  --camera=NAME                  Shows only this camera.\n"
+		"  --max_fps=N                    Upper limit of the frames per second.\n"
+		"  --window_width=N               --window_height=N     (only for the size of the --save_snapshot picture)\n"
+		"\n"
+		"Testing:\n"
+		"  --save_snapshot=file.jpg       Opens no window, stores the first picture with a camera in the file and quits\n"
+		"                                 (exit code 0, or 1 if no picture came in time).\n"
+		"  --snapshot_timeout=SECONDS     How long to wait for a picture (default 30).\n"
+		"  --snapshot_min_cameras=N       Waits until N cameras are there (to test the layout).\n"
+		<< std::endl;
+}
+
 int main(int argc, char *argv[])
 {
+	for (int i = 1; i < argc; ++i)
+	{
+		std::string argument(argv[i]);
+		if (argument == "--help" || argument == "-h" || argument == "-?" || argument == "/?")
+		{
+			PrintHelp();
+			return 0;
+		}
+	}
+
 	Core::Init();
 	Core::Process::EnterProjectFolder("CamDisplay");
 
