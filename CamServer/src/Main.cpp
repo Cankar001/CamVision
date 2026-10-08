@@ -130,8 +130,82 @@ static int ManageDevices(const Core::Config &settings, const std::string &file)
 	return 0;
 }
 
+// --help: lists everything, which can be given on the command line. Every setting can also be written into server.cfg (without the leading "--").
+static void PrintHelp()
+{
+	std::cout <<
+		"CamServer - receives the video of the cameras, shows it on the displays, records it and detects faces.\n"
+		"\n"
+		"Usage: CamServer [start_directory] [--command] [--setting=value ...]\n"
+		"\n"
+		"Settings are read from server.cfg in the working directory (or --config=path). A --setting=value argument overrides the file.\n"
+		"The first argument without leading \"--\" is used as the working directory.\n"
+		"\n"
+		"Commands (they do their job and quit):\n"
+		"  --help                         Shows this text.\n"
+		"  --add_device=camera|display    Makes a key for a new device (needs --name=\"Front door\").\n"
+		"  --remove_device=NAME           Removes a device, its key does not work anymore.\n"
+		"  --list_devices                 Lists the devices (names and roles, never the keys).\n"
+		"  --show_websocket_token         Prints the secret of the remote control (it is made, if there is none yet).\n"
+		"  --email_test                   Sends a test email with the email settings.\n"
+		"  --face_test=photo.jpg          Analyzes one photo and prints the result.\n"
+		"\n"
+		"Commands for a running server (sent to the control port):\n"
+		"  --record_now=MINUTES           Saves the last minutes of video (optional: --record_camera=NAME).\n"
+		"  --control_status               Prints the status of the server.\n"
+		"  --control_stop                 Stops the server.\n"
+		"\n"
+		"General settings:\n"
+		"  --config=path                  Settings file (default: server.cfg).\n"
+		"  --port=N                       Port of the server.\n"
+		"  --backup_minutes=N             Length of the video backup in minutes.\n"
+		"  --preview=true|false           Shows the frame previews.\n"
+		"  --client_timeout_seconds=N     Seconds without a frame until a client counts as gone.\n"
+		"  --control_port=N               Port for the commands above (0 = off).\n"
+		"  --auth=true|false              Only devices with a key may connect.\n"
+		"  --devices_file=path            File with the devices and their keys.\n"
+		"\n"
+		"Remote control (websocket):\n"
+		"  --websocket_port=N             Port (0 = off).\n"
+		"  --websocket_bind=address       Address to listen on.\n"
+		"  --websocket_token=secret       Secret of the remote control.\n"
+		"  --websocket_token_file=path    File with the secret.\n"
+		"\n"
+		"Faces:\n"
+		"  --faces=true|false             Turns the face recognition on or off.\n"
+		"  --face_detector_model=path     --face_recognizer_model=path     --known_faces_path=path\n"
+		"  --face_score_threshold=F       --face_match_threshold=F         --face_detect_width=N\n"
+		"  --face_fps=N                   --face_on_displays=true|false    --face_event_cooldown=SECONDS\n"
+		"  --face_snapshots=true|false    --face_snapshot_path=path\n"
+		"\n"
+		"Recording:\n"
+		"  --recordings_path=path         --record_schedule=SCHEDULE       --record_cameras=A,B\n"
+		"  --record_segment_minutes=N     --record_keep_days=N             --record_max_gb=N\n"
+		"  --record_default_minutes=N     --record_event_minutes=N         --record_on_unknown_person=true|false\n"
+		"\n"
+		"Email notifications:\n"
+		"  --email=true|false             --email_to=a@b.c,d@e.f           --email_from=address\n"
+		"  --email_smtp_server=host       --email_smtp_port=N              --email_security=MODE\n"
+		"  --email_user=name              --email_password=secret          (or the environment variable CAMVISION_EMAIL_PASSWORD)\n"
+		"  --email_subject_prefix=text    --email_attach_snapshot=true|false  --email_batch=true|false\n"
+		"  --email_collect_seconds=N      --email_min_interval=SECONDS     --email_max_attachments=N\n"
+		"  --email_camera_offline=true|false  --email_verify_certificate=true|false\n"
+		"  --email_curl_path=path         --email_timeout=SECONDS\n"
+		<< std::endl;
+}
+
 int main(int argc, char *argv[])
 {
+	for (int i = 1; i < argc; ++i)
+	{
+		std::string argument(argv[i]);
+		if (argument == "--help" || argument == "-h" || argument == "-?" || argument == "/?")
+		{
+			PrintHelp();
+			return 0;
+		}
+	}
+
 	Core::Init();
 	Core::Process::EnterProjectFolder("CamServer");
 
