@@ -36,6 +36,25 @@ struct FaceAnalyzer::Impl
 	std::atomic<bool> CanRecognizeFlag{ false };
 };
 
+#ifdef CAM_HAS_FACE_API
+// The YuNet detector halves the picture several times and adds the levels together again, which only fits, if the width and the height are
+// multiples of 32 (OpenCV 4.5.x fails with "Eltwise ... inputs[vecIdx][j] == inputs[i][j]" otherwise, for example for 640x360). The picture is
+// padded at the right and bottom, so the coordinates of the faces stay the same.
+static cv::Mat PadToMultipleOf32(const cv::Mat &image)
+{
+	int width = (image.cols + 31) / 32 * 32;
+	int height = (image.rows + 31) / 32 * 32;
+	if (width == image.cols && height == image.rows)
+	{
+		return image;
+	}
+
+	cv::Mat padded;
+	cv::copyMakeBorder(image, padded, 0, height - image.rows, 0, width - image.cols, cv::BORDER_CONSTANT, cv::Scalar());
+	return padded;
+}
+#endif
+
 static bool IsImageFile(const std::filesystem::path &path)
 {
 	std::string extension = path.extension().string();
@@ -181,6 +200,7 @@ void FaceAnalyzer::LoadKnownFaces()
 				cv::resize(image, small, cv::Size(m_Config.DetectWidth, std::max(1, (int)std::lround(image.rows / scale))));
 			}
 
+			small = PadToMultipleOf32(small);
 			m_Impl->Detector->setInputSize(small.size());
 			cv::Mat faces;
 			m_Impl->Detector->detect(small, faces);
@@ -296,6 +316,7 @@ std::vector<FaceResult> FaceAnalyzer::Analyze(const cv::Mat &frame)
 		cv::resize(frame, small, cv::Size(m_Config.DetectWidth, std::max(1, (int)std::lround(frame.rows / scale))));
 	}
 
+	small = PadToMultipleOf32(small);
 	m_Impl->Detector->setInputSize(small.size());
 	cv::Mat faces;
 	m_Impl->Detector->detect(small, faces);
