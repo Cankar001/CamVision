@@ -51,6 +51,7 @@ project "CamTests"
 			"anl",
 			"ssl",
 			"crypto",
+			"atomic",
         }
 
     filter "configurations:Debug"

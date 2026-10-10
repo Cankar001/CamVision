@@ -67,7 +67,8 @@ project "CamServer"
 			"pthread",
 			"anl",
 			"ssl",
-			"crypto"
+			"crypto",
+			"atomic"
 		}
 
 	filter { "system:macos", "configurations:Debug" }
@@ -121,7 +122,8 @@ project "CamServer"
 			"pthread",
 			"anl",
 			"ssl",
-			"crypto"
+			"crypto",
+			"atomic"
 		}
 
 	filter { "system:macos", "configurations:Release" }

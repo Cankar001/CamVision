@@ -49,6 +49,7 @@ project "UpdateServer"
 			"anl",
 			"ssl",
 			"crypto",
+			"atomic",
         }
 
     filter "configurations:Debug"

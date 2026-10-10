@@ -50,6 +50,7 @@ project "UpdateClient"
 			"anl",
 			"ssl",
 			"crypto",
+			"atomic",
         }
 
     filter "configurations:Debug"
