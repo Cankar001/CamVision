@@ -59,6 +59,13 @@ project "Cam-Core"
             "CAM_PLATFORM_LINUX",
         }
 
+		-- 32 bit ARM (older Raspberry Pi OS) has no 64 bit atomic instructions, the compiler calls libatomic for std::atomic<uint64>
+		-- (undefined reference to __atomic_load_8). It is part of GCC (build-essential) and harmless on other CPUs.
+		links
+		{
+			"atomic"
+		}
+
     filter "configurations:Debug"
         symbols "On"
 

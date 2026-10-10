@@ -17,10 +17,12 @@ workspace "CamVision"
 		".editorconfig"
 	}
 
-	flags
-	{
-		"MultiProcessorCompile"
-	}
+	-- Newer premake versions replaced the flag by a setting (and removed the flags function), older ones only know the flag.
+	if multiprocessorcompile then
+		multiprocessorcompile "On"
+	elseif flags then
+		flags { "MultiProcessorCompile" }
+	end
 
 	-- Linux builds for the machine it runs on. Forcing 64 bit x86 there would pass -m64 to the compiler, which does not exist on ARM (Raspberry Pi).
 	filter "system:not linux"
