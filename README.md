@@ -129,7 +129,7 @@ Create `/etc/systemd/system/camvision-client.service` (adjust the user and the p
 
 ```ini
 [Unit]
-Description=CamVision camera client
+Description=CamVision Camera client
 After=network-online.target
 Wants=network-online.target
 
@@ -142,6 +142,27 @@ RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
+```
+
+If you wish to start the client with a preview window, use this config:
+
+```ini
+[Unit]
+Description=CamVision Camera Client
+After=graphical.target netowrk-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/CamVision
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+ExecStart=/home/pi/CamVision/bin/Release/CamClient
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target
 ```
 
 ```shell
