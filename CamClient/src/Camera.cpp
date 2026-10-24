@@ -27,8 +27,11 @@ bool Camera::TryOpenStream(int32 backend, bool useMjpg)
 
 	if (m_Width != 0 && m_Height != 0)
 	{
-		m_CameraStream.set(cv::CAP_PROP_FRAME_WIDTH, (double)m_Width);
-		m_CameraStream.set(cv::CAP_PROP_FRAME_HEIGHT, (double)m_Height);
+		// m_CameraStream.set(cv::CAP_PROP_FRAME_WIDTH, (double)m_Width);
+		// m_CameraStream.set(cv::CAP_PROP_FRAME_HEIGHT, (double)m_Height);
+
+		m_CameraStream.set(cv::CAP_PROP_FRAME_WIDTH, 1920);
+		m_CameraStream.set(cv::CAP_PROP_FRAME_HEIGHT, 1080);
 	}
 
 	// Cameras deliver grey/dark frames while auto exposure and white balance settle, so discard the first frames.
