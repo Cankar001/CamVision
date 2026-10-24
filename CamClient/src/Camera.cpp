@@ -96,7 +96,7 @@ void Camera::EnsureWindow()
 	if (m_Fullscreen)
 	{
 		// Like the display application: the whole screen, without a border or a title bar.
-		cv::namedWindow("Frame", cv::WINDOW_NORMAL);
+		cv::namedWindow("Frame", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
 		cv::setWindowProperty("Frame", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
 	}
 	else
@@ -288,6 +288,34 @@ Byte *Camera::Show(uint32 frameIndex, uint32 *out_frame_size, uint32 *out_frame_
 	return frame_data;
 }
 
+cv::Mat Camera::FitFrameToDisplay(const cv::Mat& frame, int displayWidth, int displayHeight)
+{
+	const double scale = std::min(
+		static_cast<double>(displayWidth) / frame.cols,
+		static_cast<double>(displayHeight) / frame.rows
+	);
+
+	const int width = std::max(1, static_cast<int>(frame.cols * scale));
+	const int height = std::max(1, static_cast<int>(frame.rows * scale));
+
+	cv::Mat resized;
+	cv::resize(frame, resized, cv::Size(width, height));
+
+	cv::Mat canvas(
+		displayHeight,
+		displayWidth,
+		frame.type(),
+		cv::Scalar::all(0)
+	);
+
+	const int x = (displayWidth - width) / 2;
+	const int y = (displayHeight - height) / 2;
+
+	resized.copyTo(canvas(cv::Rect(x, y, width, height)));
+
+	return canvas;
+}
+
 Byte *Camera::ShowLive(uint32 *out_frame_size, uint32 *out_frame_width, uint32 *out_frame_height)
 {
 	if (!out_frame_size || !out_frame_width || !out_frame_height)
@@ -315,7 +343,10 @@ Byte *Camera::ShowLive(uint32 *out_frame_size, uint32 *out_frame_width, uint32 *
 	*out_frame_height = frame.rows;
 
 	EnsureWindow();
-	cv::imshow("Frame", frame);
+
+	cv::Mat preview = FitFrameToDisplay(frame, 800, 480);
+
+	cv::imshow("Frame", preview);
 
 	HandleKey(cv::waitKey(1));
 

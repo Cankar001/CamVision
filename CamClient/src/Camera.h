@@ -110,6 +110,8 @@ private:
 	/// </summary>
 	void EnsureWindow();
 
+	cv::Mat FitFrameToDisplay(const cv::Mat& frame, int displayWidth, int displayHeight);
+
 	/// <summary>
 	/// Handles the keys of the preview window: Esc and q close it, z and x zoom.
 	/// </summary>
