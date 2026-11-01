@@ -82,10 +82,14 @@ struct ServerConfig
 	uint32 RecordDefaultMinutes = 5;
 
 	/// <summary>
-	/// Saves the last minutes of a camera automatically, when an unknown person is seen by it (needs the face recognition).
+	/// Saves a video of a camera automatically, when an unknown person is seen by it (needs the face recognition). The video starts
+	/// RecordEventBeforeSeconds before the event (taken from the buffer) and ends RecordEventAfterSeconds after it, so the event is in the middle.
+	/// If the event goes on, the video is made longer, but not longer than RecordEventMaxSeconds after the first event.
 	/// </summary>
 	bool RecordOnUnknownPerson = false;
-	uint32 RecordEventMinutes = 1;
+	uint32 RecordEventBeforeSeconds = 40;
+	uint32 RecordEventAfterSeconds = 45;
+	uint32 RecordEventMaxSeconds = 180;
 
 	/// <summary>
 	/// The port of the control channel (only reachable from this computer), with which a running server is told to save recordings, to report its
@@ -324,6 +328,19 @@ public:
 	SaveReport SaveClips(uint32 minutes, const std::string &cameraFilter, const std::string &label);
 
 	/// <summary>
+	/// Saves the frames of a time span (wall clock milliseconds, like RecordedFrame::TimeMS) as video files. The part of the span, which the buffer no
+	/// longer holds, is missing.
+	/// </summary>
+	SaveReport SaveClipsBetween(int64 fromMS, int64 toMS, const std::string &cameraFilter, const std::string &label);
+
+	/// <summary>
+	/// An event (for example an unknown person) happened at a camera: saves the video from RecordEventBeforeSeconds before it to RecordEventAfterSeconds
+	/// after it. Returns at once, the video is saved in the background when the end is reached. A second event of the same camera before that makes the
+	/// pending video longer.
+	/// </summary>
+	void RecordEventClip(const std::string &camera, int64 eventMS, const std::string &label);
+
+	/// <summary>
 	/// Starts the remote control: a WebSocket, over which everything can be controlled with JSON commands (see the README, section Remote control). Needs
 	/// the recording to be started first.
 	/// </summary>
@@ -425,6 +442,24 @@ private:
 	std::unique_ptr<Recorder> m_Recorder;
 	std::thread m_ControlThread;
 	std::atomic<bool> m_StopRequested{ false };
+
+	// Videos of events, which wait for their end (per camera name), guarded by m_EventClipsMutex.
+	struct PendingEventClip
+	{
+		int64 FirstMS = 0;
+		int64 EndMS = 0;
+	};
+
+	struct EventClipThread
+	{
+		std::thread Thread;
+		std::shared_ptr<std::atomic<bool>> Done;
+	};
+
+	std::mutex m_EventClipsMutex;
+	std::unordered_map<std::string, PendingEventClip> m_PendingEventClips;
+	std::vector<EventClipThread> m_EventClipThreads;
+	void JoinEventClips();
 
 	// The remote control: the commands, and the WebSocket server, which takes them.
 	std::unique_ptr<Core::CommandDispatcher> m_Commands;

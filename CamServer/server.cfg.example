@@ -62,10 +62,16 @@ record_max_gb = 20
 # How many minutes the key R (preview window) saves.
 record_default_minutes = 5
 
-# Saves the last minutes of a camera automatically, when it sees an unknown person (needs the face recognition). The video contains the minutes before
-# and until the event, so you see how the person came in.
+# Saves a video of a camera automatically, when it sees an unknown person (needs the face recognition). The event is in the MIDDLE of the video: it starts
+# record_event_before_seconds before the event (taken from the buffer, so you see how the person came in) and ends record_event_after_seconds after it
+# (the server waits for that time, then saves, so the file appears that many seconds after the alarm).
+# If the person stays or comes back before the video is saved, it is made longer instead of making a second one, but it never gets longer than
+# record_event_max_seconds after the first event. backup_minutes must be larger than before + after (+ 10 seconds).
+# (record_event_minutes of older versions is not used anymore.)
 record_on_unknown_person = false
-record_event_minutes = 1
+record_event_before_seconds = 40
+record_event_after_seconds = 45
+record_event_max_seconds = 180
 
 # The control port. A program on the same computer (never from the network) can tell the running server what to do:
 #   CamServer --record_now=5                      saves the last 5 minutes of all cameras

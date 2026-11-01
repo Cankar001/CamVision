@@ -106,6 +106,7 @@ Server::~Server()
 		m_MotionThread.join();
 	}
 
+	JoinEventClips();
 	m_Clients.clear();
 
 	delete m_Socket;
@@ -198,6 +199,9 @@ void Server::Run()
 	{
 		m_ControlThread.join();
 	}
+
+	// Videos of events, which wait for their end, are saved now, so nothing is lost when the server stops.
+	JoinEventClips();
 }
 
 void Server::StartFramePreviews()
@@ -1496,16 +1500,10 @@ void Server::FaceLoop()
 
 				NotifyUnknownPerson(job.Title, unknown_face, snapshot_file, snapshot_jpeg);
 
-				// The video of the minutes before and during the event is kept (in the background, the analysis must go on).
+				// The video around the event is kept: some seconds before it, and some seconds after it (in the background, the analysis must go on).
 				if (m_Config.RecordOnUnknownPerson && m_Recorder)
 				{
-					std::string camera = job.Title;
-					std::thread([this, camera]()
-					{
-						uint32 files = 0;
-						std::string report = SaveLastMinutes(m_Config.RecordEventMinutes, camera, "unknown_person", &files);
-						CAM_LOG_INFO("Saved the last {0} minute(s) of {1} because of an unknown person: {2}", m_Config.RecordEventMinutes, camera, report);
-					}).detach();
+					RecordEventClip(job.Title, job.TimeMS, "unknown_person");
 				}
 			}
 		}
@@ -1571,6 +1569,20 @@ Server::SaveReport Server::SaveClips(uint32 minutes, const std::string &cameraFi
 		minutes = available_minutes;
 	}
 
+	SaveReport report_between = SaveClipsBetween(Recorder::NowMS() - (int64)minutes * 60 * 1000, INT64_MAX, cameraFilter, label);
+	report_between.Note += report.Note;
+	return report_between;
+}
+
+Server::SaveReport Server::SaveClipsBetween(int64 fromMS, int64 toMS, const std::string &cameraFilter, const std::string &label)
+{
+	SaveReport report;
+	if (!m_Recorder)
+	{
+		report.Error = "recording is not available";
+		return report;
+	}
+
 	struct Clip
 	{
 		std::string Camera;
@@ -1585,7 +1597,7 @@ Server::SaveReport Server::SaveClips(uint32 minutes, const std::string &cameraFi
 	const bool draw_faces = m_FaceAnalyzer && m_Config.Faces.DrawOnSavedClips;
 
 	std::vector<Clip> clips;
-	int64 from_ms = Recorder::NowMS() - (int64)minutes * 60 * 1000;
+	int64 from_ms = fromMS;
 	{
 		std::lock_guard<std::mutex> lock(m_ClientsMutex);
 		for (auto &client : m_Clients)
@@ -1600,7 +1612,7 @@ Server::SaveReport Server::SaveClips(uint32 minutes, const std::string &cameraFi
 			for (uint32 i = 0; i < client->Frames.Size(); ++i)
 			{
 				const RecordedFrame &frame = client->Frames.At(i);
-				if (frame.TimeMS >= from_ms)
+				if (frame.TimeMS >= from_ms && frame.TimeMS <= toMS)
 				{
 					clip.Frames.push_back(frame);
 				}
@@ -1620,7 +1632,8 @@ Server::SaveReport Server::SaveClips(uint32 minutes, const std::string &cameraFi
 
 	if (clips.empty())
 	{
-		report.Error = cameraFilter.empty() ? "no camera has sent frames in the last " + std::to_string(minutes) + " minutes" : "the camera '" + cameraFilter + "' is not connected or has sent no frames in the last " + std::to_string(minutes) + " minutes";
+		const std::string period = toMS == INT64_MAX ? "the last " + std::to_string((Recorder::NowMS() - fromMS + 30000) / 60000) + " minutes" : "the requested time";
+		report.Error = cameraFilter.empty() ? "no camera has sent frames in " + period : "the camera '" + cameraFilter + "' is not connected or has sent no frames in " + period;
 		return report;
 	}
 
@@ -1679,6 +1692,110 @@ Server::SaveReport Server::SaveClips(uint32 minutes, const std::string &cameraFi
 	}
 
 	return report;
+}
+
+void Server::RecordEventClip(const std::string &camera, int64 eventMS, const std::string &label)
+{
+	// The buffer must still hold the start of the clip, when the end is reached.
+	const int64 before_ms = (int64)m_Config.RecordEventBeforeSeconds * 1000;
+	const int64 after_ms = (int64)m_Config.RecordEventAfterSeconds * 1000;
+	const int64 buffer_ms = (int64)m_Config.VideoBackupDuration * 60 * 1000;
+	const int64 max_ms = std::max(after_ms, std::min((int64)m_Config.RecordEventMaxSeconds * 1000, buffer_ms - before_ms - 10000));
+
+	std::lock_guard<std::mutex> lock(m_EventClipsMutex);
+
+	// Threads of finished clips are cleaned up here.
+	for (auto it = m_EventClipThreads.begin(); it != m_EventClipThreads.end();)
+	{
+		if (*it->Done)
+		{
+			it->Thread.join();
+			it = m_EventClipThreads.erase(it);
+		}
+		else
+		{
+			++it;
+		}
+	}
+
+	auto pending = m_PendingEventClips.find(camera);
+	if (pending != m_PendingEventClips.end())
+	{
+		// The event goes on (or happens again): the same video is made longer, up to the maximum, instead of a second overlapping one.
+		int64 deadline = std::min(std::max(pending->second.EndMS, eventMS + after_ms), pending->second.FirstMS + max_ms);
+		pending->second.EndMS = deadline;
+		return;
+	}
+
+	m_PendingEventClips[camera] = { eventMS, eventMS + after_ms };
+	CAM_LOG_INFO("{0}: recording the video of the event ({1} seconds before it, {2} seconds after it)...", camera, m_Config.RecordEventBeforeSeconds, m_Config.RecordEventAfterSeconds);
+
+	EventClipThread entry;
+	entry.Done = std::make_shared<std::atomic<bool>>(false);
+	std::shared_ptr<std::atomic<bool>> done = entry.Done;
+	entry.Thread = std::thread([this, camera, label, before_ms, done]()
+	{
+		// Wait until the end of the event is in the buffer (or until the server stops, then the video ends there).
+		int64 first_ms = 0, end_ms = 0;
+		for (;;)
+		{
+			{
+				std::lock_guard<std::mutex> guard(m_EventClipsMutex);
+				const PendingEventClip &clip = m_PendingEventClips[camera];
+				first_ms = clip.FirstMS;
+				end_ms = clip.EndMS;
+			}
+
+			if (!m_Running || Recorder::NowMS() >= end_ms)
+			{
+				break;
+			}
+
+			Core::SleepMS(250);
+		}
+
+		{
+			std::lock_guard<std::mutex> guard(m_EventClipsMutex);
+			m_PendingEventClips.erase(camera);
+		}
+
+		SaveReport report = SaveClipsBetween(first_ms - before_ms, std::min(end_ms, Recorder::NowMS()), camera, label);
+		std::string text;
+		if (!report.Error.empty())
+		{
+			text = report.Error;
+		}
+		else
+		{
+			for (const SavedClip &saved : report.Clips)
+			{
+				text += (text.empty() ? "" : "; ") + saved.Camera + ": " + (saved.Ok ? saved.Path + " (" + std::to_string(saved.Frames) + " frames)" : "FAILED, " + saved.Error);
+			}
+		}
+
+		CAM_LOG_INFO("Saved the video of the event at {0}: {1}", camera, text);
+		*done = true;
+	});
+
+	m_EventClipThreads.push_back(std::move(entry));
+}
+
+void Server::JoinEventClips()
+{
+	// The threads end by themselves (a server which stops ends the waiting). Taken out of the list first, so the lock is not held while they work.
+	std::vector<EventClipThread> threads;
+	{
+		std::lock_guard<std::mutex> lock(m_EventClipsMutex);
+		threads.swap(m_EventClipThreads);
+	}
+
+	for (EventClipThread &entry : threads)
+	{
+		if (entry.Thread.joinable())
+		{
+			entry.Thread.join();
+		}
+	}
 }
 
 std::string Server::SaveLastMinutes(uint32 minutes, const std::string &cameraFilter, const std::string &label, uint32 *savedFiles)

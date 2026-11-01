@@ -191,7 +191,8 @@ static void PrintHelp()
 		"Recording:\n"
 		"  --recordings_path=path         --record_schedule=SCHEDULE       --record_cameras=A,B\n"
 		"  --record_segment_minutes=N     --record_keep_days=N             --record_max_gb=N\n"
-		"  --record_default_minutes=N     --record_event_minutes=N         --record_on_unknown_person=true|false\n"
+		"  --record_default_minutes=N     --record_on_unknown_person=true|false\n"
+		"  --record_event_before_seconds=N  --record_event_after_seconds=N   --record_event_max_seconds=N\n"
 		"\n"
 		"Email notifications:\n"
 		"  --email=true|false             --email_to=a@b.c,d@e.f           --email_from=address\n"
@@ -328,7 +329,19 @@ int main(int argc, char *argv[])
 
 	config.RecordDefaultMinutes = (uint32)std::max(settings.GetInt("record_default_minutes", config.RecordDefaultMinutes), 1);
 	config.RecordOnUnknownPerson = settings.GetBool("record_on_unknown_person", config.RecordOnUnknownPerson);
-	config.RecordEventMinutes = (uint32)std::max(settings.GetInt("record_event_minutes", config.RecordEventMinutes), 1);
+	config.RecordEventBeforeSeconds = (uint32)std::max(settings.GetInt("record_event_before_seconds", config.RecordEventBeforeSeconds), 0);
+	config.RecordEventAfterSeconds = (uint32)std::max(settings.GetInt("record_event_after_seconds", config.RecordEventAfterSeconds), 0);
+	config.RecordEventMaxSeconds = (uint32)std::max(settings.GetInt("record_event_max_seconds", config.RecordEventMaxSeconds), 0);
+	if (!settings.GetString("record_event_minutes", "").empty())
+	{
+		CAM_LOG_WARN("record_event_minutes is not used anymore: the video of an event starts record_event_before_seconds ({}) before it and ends record_event_after_seconds ({}) after it.", config.RecordEventBeforeSeconds, config.RecordEventAfterSeconds);
+	}
+
+	// The start of the video has to be in the buffer, when its end is reached.
+	if ((uint64)(config.RecordEventBeforeSeconds + config.RecordEventAfterSeconds + 10) > (uint64)config.VideoBackupDuration * 60)
+	{
+		CAM_LOG_WARN("backup_minutes ({0}) is too small for record_event_before_seconds + record_event_after_seconds ({1} seconds): the start of the videos of events will be missing.", config.VideoBackupDuration, config.RecordEventBeforeSeconds + config.RecordEventAfterSeconds);
+	}
 	config.ControlPort = (uint16)std::max(settings.GetInt("control_port", config.ControlPort), 0);
 	config.WebSocketPort = (uint16)std::max(settings.GetInt("websocket_port", config.WebSocketPort), 0);
 	config.WebSocketBind = settings.GetString("websocket_bind", config.WebSocketBind);
