@@ -13,7 +13,12 @@ public:
 
 	/// <param name="minAreaPercent">How much of the picture (in percent) has to change, to count as movement.</param>
 	/// <param name="pixelThreshold">How much the brightness of a pixel (0 - 255) has to change, so that the pixel counts as changed.</param>
-	MotionDetector(double minAreaPercent = 1.0, int pixelThreshold = 25);
+	/// <param name="lightShift">A change of the brightness of the whole picture (the median of all pixels, 0 - 255) by at least this much is a change of the
+	/// lighting (a lamp turned on or off, the day/night mode of the camera), not a movement. 0 turns this check off.</param>
+	/// <param name="lightAreaPercent">The same, if at least this part of the picture (in percent) changed at once. 0 turns this check off.</param>
+	/// <param name="settleFrames">After a change of the lighting, no movement is reported for at least this many frames (the camera adjusts its exposure
+	/// for a moment), while the background is learned again.</param>
+	MotionDetector(double minAreaPercent = 1.0, int pixelThreshold = 25, double lightShift = 8.0, double lightAreaPercent = 50.0, int settleFrames = 15);
 
 	/// <summary>
 	/// Compares the frame with the background.
@@ -27,10 +32,20 @@ public:
 	/// </summary>
 	double GetLastChangedArea() const { return m_LastChangedArea; }
 
+	/// <summary>
+	/// True, if the last call of Update saw a change of the lighting (and so reported no movement).
+	/// </summary>
+	bool IsLightingChange() const { return m_LightingChange; }
+
 private:
 
 	double m_MinArea;
 	int m_PixelThreshold;
+	double m_LightShift;
+	double m_LightArea;
+	int m_SettleLength;
+	int m_SettleFrames = 0;
+	bool m_LightingChange = false;
 	double m_LastChangedArea = 0.0;
 	cv::Mat m_Background;
 	int m_WarmupFrames = 5;

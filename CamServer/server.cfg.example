@@ -108,6 +108,17 @@ motion_fps = 5
 motion_min_area = 1.0
 motion_pixel_threshold = 25
 
+# Changes of the lighting are not movement: a lamp (with its own motion sensor) turning on in front of a camera, the day/night (IR) mode of a camera, the
+# automatic exposure of the camera adjusting afterwards. Such a change moves the brightness of the WHOLE picture, a person does not (the median of all
+# pixels stays where it was, as long as the person covers less than half of the picture). The picture counts as a change of the lighting, if its
+# brightness (0 - 255) changes by at least motion_light_shift at once, or at least motion_light_area percent of the picture changes at once. The background
+# is learned again, and for at least motion_light_settle_seconds after it, no movement is reported (the camera needs a moment to adjust). 0 turns a check
+# off (both 0: no lighting check). Lower values suppress more, but a person in front of a large part of the picture may be taken for a lamp.
+# The log says "Change of the lighting at the camera ..." each time (at most every 10 seconds), look there if the screens do not wake up.
+motion_light_shift = 8
+motion_light_area = 50
+motion_light_settle_seconds = 3
+
 # ---- Face detection and recognition (off by default) ----------------------------------------------------------------------------------------
 # Finds the faces in the camera feeds, and recognizes known people. It needs two model files and photos of the known people, see README.md
 # ("Face detection and recognition"). Faces are marked in the preview windows, and reported in the log.

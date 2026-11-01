@@ -36,6 +36,15 @@ struct MotionConfig
 	/// </summary>
 	float MinArea = 1.0f;
 	int32 PixelThreshold = 25;
+
+	/// <summary>
+	/// Changes of the lighting (a lamp turning on in front of a camera, the day/night mode of a camera) are not movement. The picture counts as a change of
+	/// the lighting, if its brightness (the median of all pixels, 0 - 255) changes by at least LightShift at once, or if at least LightAreaPercent of the
+	/// picture changes at once. 0 turns the check off. After a change of the lighting, movement is ignored for at least LightSettleSeconds.
+	/// </summary>
+	float LightShift = 8.0f;
+	float LightAreaPercent = 50.0f;
+	float LightSettleSeconds = 3.0f;
 };
 
 struct ServerConfig

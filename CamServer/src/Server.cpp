@@ -486,8 +486,12 @@ void Server::MotionLoop()
 		MotionDetector Detector;
 		uint32 LastNumber = 0;
 		int64 LastAnalysisMS = 0;
+		int64 LastLightingLogMS = 0;
 
-		CameraState(double min_area, int pixel_threshold) : Detector(min_area, pixel_threshold) {}
+		CameraState(const MotionConfig &config)
+			: Detector(config.MinArea, config.PixelThreshold, config.LightShift, config.LightAreaPercent, (int)std::lround(config.LightSettleSeconds * std::max<uint32>(config.FPS, 1)))
+		{
+		}
 	};
 
 	const MotionConfig &config = m_Config.Motion;
@@ -517,7 +521,7 @@ void Server::MotionLoop()
 			for (auto &client : m_Clients)
 			{
 				uint64 address = client->Address.Value;
-				auto it = cameras.try_emplace(address, config.MinArea, config.PixelThreshold).first;
+				auto it = cameras.try_emplace(address, config).first;
 				CameraState &state = it->second;
 				if (client->LatestFrame && client->LatestFrameNumber != state.LastNumber && now - state.LastAnalysisMS >= interval_ms)
 				{
@@ -541,9 +545,15 @@ void Server::MotionLoop()
 			{
 				// A picture in half the size, in gray, is enough (and decodes much faster).
 				cv::Mat image = cv::imdecode(*job.Frame, cv::IMREAD_REDUCED_GRAYSCALE_2);
-				if (!image.empty() && cameras.at(job.Address).Detector.Update(image))
+				CameraState &state = cameras.at(job.Address);
+				if (!image.empty() && state.Detector.Update(image))
 				{
 					moving_camera = job.Title;
+				}
+				else if (state.Detector.IsLightingChange() && now - state.LastLightingLogMS > 10000)
+				{
+					CAM_LOG_INFO("Change of the lighting at the camera {}, not counted as movement.", job.Title);
+					state.LastLightingLogMS = now;
 				}
 			}
 			catch (const cv::Exception &e)

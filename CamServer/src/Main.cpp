@@ -174,6 +174,7 @@ static void PrintHelp()
 		"Movement (wakes up the screens of the displays and the cameras):\n"
 		"  --motion=true|false            Turns the movement detection on or off.\n"
 		"  --motion_fps=N                 --motion_min_area=PERCENT        --motion_pixel_threshold=N\n"
+		"  --motion_light_shift=N         --motion_light_area=PERCENT      --motion_light_settle_seconds=S\n"
 		"\n"
 		"Faces:\n"
 		"  --faces=true|false             Turns the face recognition on or off.\n"
@@ -267,6 +268,9 @@ int main(int argc, char *argv[])
 	motion.FPS = (uint32)std::max(settings.GetInt("motion_fps", motion.FPS), 1);
 	motion.MinArea = settings.GetFloat("motion_min_area", motion.MinArea);
 	motion.PixelThreshold = std::max(settings.GetInt("motion_pixel_threshold", motion.PixelThreshold), 1);
+	motion.LightShift = std::max(settings.GetFloat("motion_light_shift", motion.LightShift), 0.0f);
+	motion.LightAreaPercent = std::max(settings.GetFloat("motion_light_area", motion.LightAreaPercent), 0.0f);
+	motion.LightSettleSeconds = std::max(settings.GetFloat("motion_light_settle_seconds", motion.LightSettleSeconds), 0.0f);
 
 	FaceConfig &faces = config.Faces;
 	faces.Enabled = settings.GetBool("faces", faces.Enabled);

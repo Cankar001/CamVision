@@ -1,9 +1,11 @@
 #include "MotionDetector.h"
 
 #include <algorithm>
+#include <cmath>
+#include <vector>
 
-MotionDetector::MotionDetector(double minAreaPercent, int pixelThreshold)
-	: m_MinArea(minAreaPercent / 100.0), m_PixelThreshold(pixelThreshold)
+MotionDetector::MotionDetector(double minAreaPercent, int pixelThreshold, double lightShift, double lightAreaPercent, int settleFrames)
+	: m_MinArea(minAreaPercent / 100.0), m_PixelThreshold(pixelThreshold), m_LightShift(lightShift), m_LightArea(lightAreaPercent / 100.0), m_SettleLength(std::max(settleFrames, 0))
 {
 }
 
@@ -42,6 +44,8 @@ bool MotionDetector::Update(const cv::Mat &frame)
 	{
 		gray.convertTo(m_Background, CV_32F);
 		m_WarmupFrames = 5;
+		m_SettleFrames = 0;
+		m_LightingChange = false;
 		m_LastChangedArea = 0.0;
 		return false;
 	}
@@ -55,6 +59,24 @@ bool MotionDetector::Update(const cv::Mat &frame)
 	cv::dilate(changed, changed, cv::Mat(), cv::Point(-1, -1), 2);
 
 	m_LastChangedArea = (double)cv::countNonZero(changed) / (double)changed.total();
+
+	// A change of the lighting (a lamp, which turns on in front of the camera, the day/night mode) changes the whole picture at once. A person does not do
+	// that: the median of all pixels stays where it was, as long as the person covers less than half of the picture.
+	cv::Mat signed_difference;
+	cv::subtract(gray, background8, signed_difference, cv::noArray(), CV_16S);
+	std::vector<short> values(signed_difference.begin<short>(), signed_difference.end<short>());
+	std::nth_element(values.begin(), values.begin() + values.size() / 2, values.end());
+	double shift = values.empty() ? 0.0 : (double)values[values.size() / 2];
+
+	m_LightingChange = (m_LightShift > 0.0 && std::abs(shift) >= m_LightShift) || (m_LightArea > 0.0 && m_LastChangedArea >= m_LightArea);
+	if (m_LightingChange)
+	{
+		// Learn the new lighting at once (the first frames after it are the ones, where the camera is still adjusting, so this goes on as long as the
+		// picture changes), and wait until it is calm.
+		m_SettleFrames = m_SettleLength;
+		cv::accumulateWeighted(gray, m_Background, 0.5);
+		return false;
+	}
 
 	// The background follows the picture, but not where something moves right now (otherwise a person, who stands still, would become background).
 	// During the first frames everything is learned quickly.
@@ -70,6 +92,13 @@ bool MotionDetector::Update(const cv::Mat &frame)
 	if (m_WarmupFrames > 0)
 	{
 		--m_WarmupFrames;
+		return false;
+	}
+
+	// Still settling after a change of the lighting: the background follows as usual, but nothing is reported yet.
+	if (m_SettleFrames > 0)
+	{
+		--m_SettleFrames;
 		return false;
 	}
 
