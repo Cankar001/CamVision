@@ -35,6 +35,12 @@ flip_image = false
 # Has no effect with headless = true.
 fullscreen = false
 
+# What happens to the screen of this camera (only with a preview window, not with headless = true). "on": nothing, the system decides when it goes to sleep.
+# "auto": the screen is switched on when the server sees movement in any camera, and off after screen_timeout seconds without movement. The movement is
+# detected by the server, this camera analyzes nothing. Own commands (for example on Wayland): screen_on_command, screen_off_command.
+screen_mode = on
+screen_timeout = 60
+
 # Frames per second announced to the server (sizes its backup buffer).
 fps = 30
 

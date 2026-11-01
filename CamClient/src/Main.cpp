@@ -62,6 +62,8 @@ static void PrintHelp()
 		"  --flip_image=true|false        Turns the picture around.\n"
 		"  --fullscreen=true|false        Shows the video fullscreen without a border, like CamDisplay. Esc (or Q) closes it and ends the client.\n"
 		"  --headless=true|false          No windows, the frames are only sent to the server.\n"
+		"  --screen_mode=on|auto          auto: the screen is switched on when the server sees movement, off after --screen_timeout seconds without.\n"
+		"  --screen_timeout=SECONDS       --screen_on_command=CMD      --screen_off_command=CMD\n"
 #if FRAME_ANALYSIS
 		"\n"
 		"Frame analysis (movement and face detection):\n"
@@ -126,6 +128,8 @@ int main(int argc, char *argv[])
 	analysis.HoldSeconds = (uint32)std::max(settings.GetInt("analysis_hold_seconds", analysis.HoldSeconds), 0);
 	analysis.IdleFPS = (uint32)std::max(settings.GetInt("analysis_idle_fps", analysis.IdleFPS), 1);
 #endif // FRAME_ANALYSIS
+
+	config.Screen = Core::ScreenPower::Settings::FromConfig(settings);
 
 	// Headless: no windows, frames are only sent to the server. For devices without a display.
 	bool headless = settings.GetBool("headless", false);

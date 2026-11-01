@@ -24,13 +24,21 @@
 static const char *WINDOW_NAME = "CamVision";
 
 DisplayClient::DisplayClient(const DisplayClientConfig &config)
-	: m_Config(config)
+	: m_Config(config), m_Screen(config.Screen)
 {
 	CAM_LOG_INFO("===================== CONFIG ===================================");
 	CAM_LOG_INFO("Server                : {0}:{1}", config.ServerIP, config.Port);
 	CAM_LOG_INFO("Display name          : {}", config.Name);
 	CAM_LOG_INFO("Camera                : {}", config.Camera.empty() ? std::string("all cameras") : config.Camera);
 	CAM_LOG_INFO("Max FPS per camera    : {}", config.MaxFPS);
+	if (config.Screen.Auto)
+	{
+		CAM_LOG_INFO("Screen                : auto (on with movement, off after {} seconds without)", config.Screen.TimeoutSeconds);
+	}
+	else
+	{
+		CAM_LOG_INFO("Screen                : not controlled");
+	}
 	CAM_LOG_INFO("Protocol version      : {}", CAM_PROTOCOL_VERSION);
 	CAM_LOG_INFO("================================================================");
 
@@ -106,6 +114,7 @@ int DisplayClient::Run()
 			// The display always covers the whole screen, without a border or a title bar.
 			cv::namedWindow(WINDOW_NAME, cv::WINDOW_NORMAL);
 			cv::setWindowProperty(WINDOW_NAME, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+			cv::setMouseCallback(WINDOW_NAME, &DisplayClient::OnMouse, this);
 		}
 		catch (const cv::Exception &e)
 		{
@@ -117,6 +126,11 @@ int DisplayClient::Run()
 
 	int exit_code = 0;
 	int64 start_ms = Core::QueryMS();
+
+	if (!snapshot_mode)
+	{
+		m_Screen.Start();
+	}
 
 	while (m_Running)
 	{
@@ -167,6 +181,8 @@ int DisplayClient::Run()
 				continue;
 			}
 
+			m_Screen.Update();
+
 			cv::imshow(WINDOW_NAME, canvas);
 			// Esc (or Q) shuts the display down. On some systems waitKey returns more than the key code in the higher bits.
 			int key = cv::waitKey(15) & 0xFF;
@@ -195,7 +211,18 @@ int DisplayClient::Run()
 		m_NetworkThread.join();
 	}
 
+	// Leave the screen on, the display does not run anymore to switch it on again.
+	m_Screen.Stop();
+
 	return exit_code;
+}
+
+void DisplayClient::OnMouse(int event, int, int, int, void *userdata)
+{
+	if (event == cv::EVENT_LBUTTONDOWN || event == cv::EVENT_RBUTTONDOWN)
+	{
+		((DisplayClient *)userdata)->m_Screen.Wake();
+	}
 }
 
 void DisplayClient::NetworkLoop()
@@ -283,6 +310,16 @@ void DisplayClient::NetworkLoop()
 						m_Connected = true;
 						last_heartbeat_ms = last_receive_ms;
 						CAM_LOG_INFO("Connected to the server.");
+					}
+					break;
+				}
+
+				case SERVER_WAKEUP:
+				{
+					// A camera sees movement somewhere. The screen is switched on by the thread, which shows the pictures.
+					if (len == sizeof(ServerWakeupMessage))
+					{
+						m_Screen.Wake();
 					}
 					break;
 				}

@@ -171,6 +171,10 @@ static void PrintHelp()
 		"  --websocket_token=secret       Secret of the remote control.\n"
 		"  --websocket_token_file=path    File with the secret.\n"
 		"\n"
+		"Movement (wakes up the screens of the displays and the cameras):\n"
+		"  --motion=true|false            Turns the movement detection on or off.\n"
+		"  --motion_fps=N                 --motion_min_area=PERCENT        --motion_pixel_threshold=N\n"
+		"\n"
 		"Faces:\n"
 		"  --faces=true|false             Turns the face recognition on or off.\n"
 		"  --face_detector_model=path     --face_recognizer_model=path     --known_faces_path=path\n"
@@ -251,6 +255,12 @@ int main(int argc, char *argv[])
 	config.VideoBackupDuration = (uint32)std::max(settings.GetInt("backup_minutes", config.VideoBackupDuration), 1);
 	config.ShowPreview = settings.GetBool("preview", config.ShowPreview);
 	config.ClientTimeoutSeconds = (uint32)std::max(settings.GetInt("client_timeout_seconds", config.ClientTimeoutSeconds), 0);
+
+	MotionConfig &motion = config.Motion;
+	motion.Enabled = settings.GetBool("motion", motion.Enabled);
+	motion.FPS = (uint32)std::max(settings.GetInt("motion_fps", motion.FPS), 1);
+	motion.MinArea = settings.GetFloat("motion_min_area", motion.MinArea);
+	motion.PixelThreshold = std::max(settings.GetInt("motion_pixel_threshold", motion.PixelThreshold), 1);
 
 	FaceConfig &faces = config.Faces;
 	faces.Enabled = settings.GetBool("faces", faces.Enabled);

@@ -44,6 +44,9 @@ static void PrintHelp()
 		"  --key=HEX                      Key of this display (made on the server with --add_device=display).\n"
 		"  --camera=NAME                  Shows only this camera.\n"
 		"  --max_fps=N                    Upper limit of the frames per second.\n"
+		"  --screen_mode=on|auto          auto: the screen is switched on when a camera sees movement, and off after --screen_timeout seconds without.\n"
+		"  --screen_timeout=SECONDS       How long the screen stays on after the last movement (default 60).\n"
+		"  --screen_on_command=CMD        --screen_off_command=CMD     Own commands to switch the screen (for example on Wayland).\n"
 		"  --window_width=N               --window_height=N     (only for the size of the --save_snapshot picture)\n"
 		"\n"
 		"Testing:\n"
@@ -78,6 +81,7 @@ int main(int argc, char *argv[])
 	config.Key = settings.GetString("key", config.Key);
 	config.Camera = settings.GetString("camera", config.Camera);
 	config.MaxFPS = (uint32)std::max(settings.GetInt("max_fps", config.MaxFPS), 1);
+	config.Screen = Core::ScreenPower::Settings::FromConfig(settings);
 	config.WindowWidth = (uint32)std::max(settings.GetInt("window_width", config.WindowWidth), 320);
 	config.WindowHeight = (uint32)std::max(settings.GetInt("window_height", config.WindowHeight), 240);
 	config.SnapshotFile = settings.GetString("save_snapshot", "");

@@ -44,6 +44,11 @@ struct DisplayClientConfig
 	uint32 MaxFPS = 10;
 
 	/// <summary>
+	/// What happens to the screen (screen_mode = auto: it is on with movement, off without).
+	/// </summary>
+	Core::ScreenPower::Settings Screen;
+
+	/// <summary>
 	/// The size of the picture in the test mode (SnapshotFile). The display itself always covers the whole screen.
 	/// </summary>
 	uint32 WindowWidth = 1280;
@@ -138,6 +143,11 @@ private:
 	/// <param name="fresh_cameras">Is set to the number of cameras, which sent a picture lately.</param>
 	cv::Mat Compose(int width, int height, uint32 *fresh_cameras);
 
+	/// <summary>
+	/// Any click or touch on the window wakes the screen up.
+	/// </summary>
+	static void OnMouse(int event, int x, int y, int flags, void *userdata);
+
 private:
 
 	DisplayClientConfig m_Config;
@@ -146,6 +156,9 @@ private:
 
 	std::atomic<bool> m_Running{ false };
 	std::atomic<bool> m_Connected{ false };
+
+	// Switched on by a wakeup of the server (movement) or a touch, if the display is in auto mode.
+	Core::ScreenPower m_Screen;
 	std::thread m_NetworkThread;
 
 	// The feeds of the cameras, by camera id.

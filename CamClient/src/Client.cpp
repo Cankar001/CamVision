@@ -24,7 +24,7 @@
 #define SOCKET_BUFFER_SIZE (4 * 1024 * 1024)
 
 Client::Client(const ClientConfig &config)
-	: m_Config(config), m_Camera(config.Camera)
+	: m_Config(config), m_Screen(config.Screen), m_Camera(config.Camera)
 {
 	std::string cwd = "";
 	Core::FileSystem::Get()->GetCurrentWorkingDirectory(&cwd);
@@ -42,6 +42,7 @@ Client::Client(const ClientConfig &config)
 	CAM_LOG_INFO("Max FPS               : {}", config.MaxFPS == 0 ? "unlimited" : std::to_string(config.MaxFPS));
 	CAM_LOG_INFO("Camera index          : {}", config.Camera.Index);
 	CAM_LOG_INFO("Camera size           : {0}x{1}", config.Camera.Width, config.Camera.Height);
+	CAM_LOG_INFO("Screen                : {}", config.Screen.Auto ? "auto (on when the server sees movement)" : "not controlled");
 	CAM_LOG_INFO("Current Client version: {0} (protocol {1})", software_version, m_Version);
 	CAM_LOG_INFO("Current CWD           : {}", cwd);
 	CAM_LOG_INFO("================================================================");
@@ -119,7 +120,10 @@ void Client::Run(bool shouldShowFrames)
 
 	if (shouldShowFrames)
 	{
+		// The screen is only controlled, if there is something to see on it.
+		m_Screen.Start();
 		Show();
+		m_Screen.Stop();
 	}
 	else
 	{
@@ -159,6 +163,8 @@ void Client::NetworkLoop()
 	static Byte BUF[65536];
 	while (true)
 	{
+		m_Screen.Update();
+
 		if (m_ConnectedToServer)
 		{
 			was_connected = true;
@@ -268,6 +274,15 @@ void Client::NetworkLoop()
 
 			case SERVER_CONNECTION_CLOSE:
 				message_success = OnConnectionClosed(BUF, len);
+				break;
+
+			case SERVER_WAKEUP:
+				// The server sees movement in a camera: the screen is switched on (in auto mode) by the loop above.
+				if (len == sizeof(ServerWakeupMessage))
+				{
+					m_Screen.Wake();
+				}
+				message_success = true;
 				break;
 
 			case SERVER_CLIENT_UNKNOWN:

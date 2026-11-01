@@ -17,9 +17,26 @@
 #include <opencv2/opencv.hpp>
 
 #include "FaceAnalyzer.h"
+#include "MotionDetector.h"
 #include "Mailer.h"
 #include "Notifier.h"
 #include "Recorder.h"
+
+struct MotionConfig
+{
+	bool Enabled = true;
+
+	/// <summary>
+	/// How many pictures per second of every camera are checked.
+	/// </summary>
+	uint32 FPS = 5;
+
+	/// <summary>
+	/// How much of the picture (in percent) has to change to count as movement, and how much a pixel (0 - 255) has to change.
+	/// </summary>
+	float MinArea = 1.0f;
+	int32 PixelThreshold = 25;
+};
 
 struct ServerConfig
 {
@@ -47,6 +64,12 @@ struct ServerConfig
 	/// The settings of the face detection and recognition.
 	/// </summary>
 	FaceConfig Faces;
+
+	/// <summary>
+	/// The settings of the movement detection: the server looks for movement in the pictures of the cameras, and wakes up the displays and the camera clients
+	/// (their screens). The camera clients do not analyze anything, they may run on a weak device.
+	/// </summary>
+	MotionConfig Motion;
 
 	/// <summary>
 	/// The settings of the recordings (schedule, folder, ...).
@@ -316,6 +339,18 @@ private:
 	bool OnDisplayConnected(Core::addr_t &displayAddr, Byte *message, int32 addrLen);
 
 	/// <summary>
+	/// Looks for movement in the latest frames of all cameras on a thread of its own, and wakes up the displays and the camera clients while there is
+	/// movement.
+	/// </summary>
+	void MotionLoop();
+
+	/// <summary>
+	/// Tells all displays and all camera clients to switch their screens on (SERVER_WAKEUP).
+	/// </summary>
+	/// <param name="camera">The name of the camera, in which the movement was seen.</param>
+	void SendWakeup(const std::string &camera);
+
+	/// <summary>
 	/// Sends the new frames of the cameras to the displays, which want to see them, on a thread of its own. If the face analysis is running, the faces
 	/// are drawn into the frames first.
 	/// </summary>
@@ -400,5 +435,6 @@ private:
 	std::set<std::string> m_OfflineCameras;
 	std::thread m_ReaperThread;
 	std::thread m_ForwardThread;
+	std::thread m_MotionThread;
 };
 

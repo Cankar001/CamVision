@@ -12,6 +12,7 @@
 #include "Core/Timer.h"
 #include "Core/Hash.h"
 #include "Core/Config.h"
+#include "Core/ScreenPower.h"
 
 #include "Net/Net.h"
 

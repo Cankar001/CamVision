@@ -12,6 +12,7 @@ static_assert(sizeof(ClientFrameChunkMessage) == sizeof(header_t) + 4 + 4 + 2 + 
 static_assert(sizeof(ServerFrameChunkMessage) == sizeof(header_t) + 4 + MAX_FRAME_NAME_LENGTH + 4 + 4 + 2 + 2, "chunk header must have no padding");
 static_assert(sizeof(ClientConnectionStartMessage) == sizeof(header_t) + MAX_FRAME_NAME_LENGTH + 4, "no padding");
 static_assert(sizeof(DisplayConnectionStartMessage) == sizeof(header_t) + 2 * MAX_FRAME_NAME_LENGTH + 4, "no padding");
+static_assert(sizeof(ServerWakeupMessage) == sizeof(header_t) + MAX_FRAME_NAME_LENGTH, "no padding");
 static_assert(sizeof(AuthHelloMessage) == sizeof(header_t) + 8 + AUTH_RANDOM_BYTES, "no padding");
 static_assert(sizeof(AuthChallengeMessage) == sizeof(header_t) + 2 * AUTH_RANDOM_BYTES, "no padding");
 static_assert(sizeof(SecureDataHeader) == sizeof(header_t) + 8, "no padding");
@@ -33,6 +34,7 @@ TEST(Protocol, MessageTypeValuesAreStable)
 	CHECK_EQ((int)MessageType::AUTH_CHALLENGE, 12);
 	CHECK_EQ((int)MessageType::SECURE_DATA, 13);
 	CHECK_EQ((int)MessageType::AUTH_RESET, 14);
+	CHECK_EQ((int)MessageType::SERVER_WAKEUP, 15);
 }
 
 TEST(Protocol, ChunksFitIntoOneEthernetFrame)

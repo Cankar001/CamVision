@@ -22,6 +22,16 @@ camera =
 # (a Raspberry Pi 3 with several cameras on Wi-Fi: try 5).
 max_fps = 10
 
+# What happens to the screen. "on" (default): the display does not touch it, the system decides when it goes to sleep (a touch wakes it up).
+# "auto": the display switches the screen on as soon as a camera sees movement (the server tells all displays), and off after screen_timeout seconds
+# without movement. A touch wakes it up too. The movement is detected by the server (motion = true in server.cfg, the default). On Linux it uses xset (or vcgencmd), on Windows the monitor power message.
+screen_mode = on
+screen_timeout = 60
+
+# Own commands to switch the screen on and off in auto mode, if the defaults do not work (for example on Wayland). Empty uses the defaults.
+# screen_on_command = wlr-randr --output HDMI-A-1 --on
+# screen_off_command = wlr-randr --output HDMI-A-1 --off
+
 # The display always covers the whole screen, without a border or a title bar. Esc (or Q) shuts it down.
 
 # The size of the picture, if the display is started with --save_snapshot (for testing without a screen).

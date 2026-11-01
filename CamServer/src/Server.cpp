@@ -101,6 +101,11 @@ Server::~Server()
 		m_ForwardThread.join();
 	}
 
+	if (m_MotionThread.joinable())
+	{
+		m_MotionThread.join();
+	}
+
 	m_Clients.clear();
 
 	delete m_Socket;
@@ -119,6 +124,11 @@ void Server::Run()
 	}
 
 	m_ForwardThread = std::thread(&Server::ForwardLoop, std::ref(*this));
+
+	if (m_Config.Motion.Enabled)
+	{
+		m_MotionThread = std::thread(&Server::MotionLoop, std::ref(*this));
+	}
 
 	for (;;)
 	{
@@ -177,6 +187,11 @@ void Server::Run()
 	if (m_ForwardThread.joinable())
 	{
 		m_ForwardThread.join();
+	}
+
+	if (m_MotionThread.joinable())
+	{
+		m_MotionThread.join();
 	}
 
 	if (m_ControlThread.joinable())
@@ -432,6 +447,124 @@ bool Server::OnClientHeartbeat(Core::addr_t &clientAddr, Byte *message, int32 ad
 
 	SendClientUnknown(clientAddr);
 	return true;
+}
+
+void Server::SendWakeup(const std::string &camera)
+{
+	ServerWakeupMessage wakeup = {};
+	wakeup.Header.Type = SERVER_WAKEUP;
+	wakeup.Header.Version = m_Version;
+	memcpy(wakeup.CameraName, camera.c_str(), std::min<size_t>(camera.size(), MAX_FRAME_NAME_LENGTH - 1));
+
+	std::lock_guard<std::mutex> lock(m_ClientsMutex);
+	for (auto &display : m_Displays)
+	{
+		m_Socket->Send(&wakeup, sizeof(wakeup), display->Address);
+	}
+
+	for (auto &client : m_Clients)
+	{
+		m_Socket->Send(&wakeup, sizeof(wakeup), client->Address);
+	}
+}
+
+void Server::MotionLoop()
+{
+	struct Job
+	{
+		uint64 Address;
+		std::string Title;
+		EncodedFrame Frame;
+	};
+
+	struct CameraState
+	{
+		MotionDetector Detector;
+		uint32 LastNumber = 0;
+		int64 LastAnalysisMS = 0;
+
+		CameraState(double min_area, int pixel_threshold) : Detector(min_area, pixel_threshold) {}
+	};
+
+	const MotionConfig &config = m_Config.Motion;
+	const int64 interval_ms = 1000 / std::max<uint32>(config.FPS, 1);
+
+	// While the movement lasts, the wakeup is repeated at this interval (a lost datagram does not matter, and the screens stay on).
+	const int64 wakeup_interval_ms = 2000;
+
+	std::unordered_map<uint64, CameraState> cameras;
+	int64 last_wakeup_ms = 0;
+	int64 last_motion_ms = 0;
+
+	while (m_Running)
+	{
+		std::vector<Job> jobs;
+		int64 now = Core::QueryMS();
+		{
+			std::lock_guard<std::mutex> lock(m_ClientsMutex);
+
+			// Forget the cameras, which are gone.
+			for (auto it = cameras.begin(); it != cameras.end();)
+			{
+				bool exists = std::any_of(m_Clients.begin(), m_Clients.end(), [&](const auto &c) { return c->Address.Value == it->first; });
+				it = exists ? std::next(it) : cameras.erase(it);
+			}
+
+			for (auto &client : m_Clients)
+			{
+				uint64 address = client->Address.Value;
+				auto it = cameras.try_emplace(address, config.MinArea, config.PixelThreshold).first;
+				CameraState &state = it->second;
+				if (client->LatestFrame && client->LatestFrameNumber != state.LastNumber && now - state.LastAnalysisMS >= interval_ms)
+				{
+					state.LastNumber = client->LatestFrameNumber;
+					state.LastAnalysisMS = now;
+					jobs.push_back({ address, client->FrameTitle, client->LatestFrame });
+				}
+			}
+		}
+
+		if (jobs.empty())
+		{
+			Core::SleepMS(20);
+			continue;
+		}
+
+		std::string moving_camera;
+		for (const Job &job : jobs)
+		{
+			try
+			{
+				// A picture in half the size, in gray, is enough (and decodes much faster).
+				cv::Mat image = cv::imdecode(*job.Frame, cv::IMREAD_REDUCED_GRAYSCALE_2);
+				if (!image.empty() && cameras.at(job.Address).Detector.Update(image))
+				{
+					moving_camera = job.Title;
+				}
+			}
+			catch (const cv::Exception &e)
+			{
+				CAM_LOG_ERROR("Movement detection failed for the camera {0}: {1}", job.Title, e.what());
+			}
+		}
+
+		if (!moving_camera.empty())
+		{
+			if (now - last_wakeup_ms >= wakeup_interval_ms)
+			{
+				SendWakeup(moving_camera);
+				last_wakeup_ms = now;
+			}
+
+			// The log only gets the start of a movement.
+			if (now - last_motion_ms > 10000)
+			{
+				CAM_LOG_INFO("Movement at the camera {}, waking up the displays and the cameras.", moving_camera);
+			}
+
+			last_motion_ms = now;
+		}
+	}
 }
 
 static bool EqualsIgnoreCase(const std::string &a, const std::string &b)

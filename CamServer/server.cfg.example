@@ -90,6 +90,18 @@ websocket_bind = 127.0.0.1
 websocket_token =
 websocket_token_file = websocket_token.txt
 
+# ---- Movement detection (wakes up the screens) -----------------------------------------------------------------------------------------------
+# The server looks for movement in the pictures of all cameras (the camera clients do not analyze anything, so a Raspberry Pi 3 is enough for a camera).
+# While something moves, it tells all displays and all cameras with a screen to switch their screens on (screen_mode = auto in display.cfg / client.cfg).
+motion = true
+
+# How often the pictures of every camera are checked per second. Higher values react faster, but need more CPU.
+motion_fps = 5
+
+# How much of the picture (in percent) has to change to count as movement, and how much the brightness of a pixel (0 - 255) has to change.
+motion_min_area = 1.0
+motion_pixel_threshold = 25
+
 # ---- Face detection and recognition (off by default) ----------------------------------------------------------------------------------------
 # Finds the faces in the camera feeds, and recognizes known people. It needs two model files and photos of the known people, see README.md
 # ("Face detection and recognition"). Faces are marked in the preview windows, and reported in the log.

@@ -8,7 +8,7 @@
 //   camera client -> server : CLIENT_CONNECTION_START, CLIENT_FRAME (the frames), CLIENT_HEARTBEAT, CLIENT_CONNECTION_CLOSE
 //   display       -> server : DISPLAY_CONNECTION_START, CLIENT_HEARTBEAT, CLIENT_CONNECTION_CLOSE
 //   server -> camera client : SERVER_CONNECTION_START, SERVER_CONNECTION_CLOSE, SERVER_CLIENT_UNKNOWN
-//   server -> display       : SERVER_DISPLAY_START, SERVER_FRAME_CHUNK (the frames of the cameras), SERVER_CONNECTION_CLOSE, SERVER_CLIENT_UNKNOWN
+//   server -> display       : SERVER_DISPLAY_START, SERVER_FRAME_CHUNK (the frames of the cameras), SERVER_WAKEUP, SERVER_CONNECTION_CLOSE, SERVER_CLIENT_UNKNOWN
 
 enum MessageType : uint16
 {
@@ -28,7 +28,10 @@ enum MessageType : uint16
 	AUTH_HELLO,			// device -> server: "I am the device with this key id", and a random number
 	AUTH_CHALLENGE,		// server -> device: its own random number, which makes the keys of this connection new
 	SECURE_DATA,		// both directions: one of the messages above, sealed
-	AUTH_RESET			// server -> device: "I do not know this connection (anymore)", the device has to start with AUTH_HELLO again
+	AUTH_RESET,			// server -> device: "I do not know this connection (anymore)", the device has to start with AUTH_HELLO again
+
+	// Appended at the end, so the numbers of all messages above stay the same.
+	SERVER_WAKEUP		// server -> displays and camera clients: "switch the screen on", sent to all of them when the server sees movement in a camera
 };
 
 // The version of the protocol, every message carries it. It only changes, if the messages change in a way, which old programs do not understand.
@@ -85,6 +88,14 @@ struct ClientHeartbeatMessage
 };
 
 // Sent by the server to a client or display it does not know (anymore), e.g. after a timeout or a server restart. It has to connect again.
+// Sent by the server to all connected displays and camera clients, when it sees movement in the picture of a camera (the server analyzes the pictures,
+// so the camera clients do not have to). A device in auto mode switches its screen on (and keeps it on for a while). Repeated while the movement lasts.
+struct ServerWakeupMessage
+{
+	header_t Header;
+	char CameraName[MAX_FRAME_NAME_LENGTH];		// the camera, in which the movement was seen
+};
+
 struct ServerClientUnknownMessage
 {
 	header_t Header;

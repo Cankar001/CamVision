@@ -103,6 +103,12 @@ struct ClientConfig
 
 	CameraConfig Camera;
 
+	/// <summary>
+	/// What happens to the screen of the camera (only with a preview window, not headless): in auto mode, it is switched on when the server sees movement,
+	/// and off after a while without. The server analyzes the pictures, the camera client does not.
+	/// </summary>
+	Core::ScreenPower::Settings Screen;
+
 #if FRAME_ANALYSIS // FRAME ANALYSIS (movement and face detection in the camera client): switch all blocks with this tag to "#if 1" to enable it
 	FrameAnalysisConfig Analysis;
 #endif // FRAME_ANALYSIS
@@ -196,6 +202,7 @@ private:
 private:
 
 	ClientConfig m_Config;
+	Core::ScreenPower m_Screen;
 	Core::Socket *m_Socket = nullptr;
 	Core::addr_t m_Host;
 	
