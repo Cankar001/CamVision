@@ -195,11 +195,6 @@ void Server::Run()
 		m_MotionThread.join();
 	}
 
-	if (m_ControlThread.joinable())
-	{
-		m_ControlThread.join();
-	}
-
 	// Videos of events, which wait for their end, are saved now, so nothing is lost when the server stops.
 	JoinEventClips();
 }
@@ -1539,11 +1534,6 @@ void Server::StartRecording()
 {
 	m_Recorder = std::make_unique<Recorder>(m_Config.Recording);
 	m_Recorder->Start();
-
-	if (m_Config.ControlPort != 0)
-	{
-		m_ControlThread = std::thread(&Server::ControlLoop, std::ref(*this));
-	}
 }
 
 uint32 Server::SaveReport::SavedFiles() const
@@ -1824,100 +1814,6 @@ std::string Server::SaveLastMinutes(uint32 minutes, const std::string &cameraFil
 	}
 
 	return text + report.Note;
-}
-
-void Server::ControlLoop()
-{
-	Core::Socket *socket = Core::Socket::Create();
-	if (!socket->Open() || !socket->BindLoopback(m_Config.ControlPort))
-	{
-		CAM_LOG_ERROR("Could not open the control port {} (is another server running?), the commands (CamServer --record_now, ...) do not work.", m_Config.ControlPort);
-		delete socket;
-		return;
-	}
-
-	socket->SetNonBlocking(true);
-	CAM_LOG_INFO("Control port {} (only reachable from this computer): CamServer --record_now=MINUTES saves the last minutes, --control_status, --control_stop.", m_Config.ControlPort);
-
-	static Byte BUF[2048];
-	while (m_Running && !m_StopRequested)
-	{
-		Core::addr_t sender = {};
-		int32 len = socket->Recv(BUF, sizeof(BUF) - 1, &sender);
-		if (len <= 0)
-		{
-			Core::SleepMS(20);
-			continue;
-		}
-
-		BUF[len] = 0;
-		std::string command((const char *)BUF);
-		while (!command.empty() && (command.back() == 10 || command.back() == 13 || command.back() == 32))
-		{
-			command.pop_back();
-		}
-
-		std::string reply;
-		if (command.rfind("save ", 0) == 0)
-		{
-			// save <minutes> [camera name]
-			std::string rest = command.substr(5);
-			size_t space = rest.find(' ');
-			int minutes = atoi(rest.substr(0, space).c_str());
-			std::string camera = space == std::string::npos ? "" : rest.substr(space + 1);
-			if (minutes <= 0)
-			{
-				reply = "ERROR: the number of minutes is missing";
-			}
-			else
-			{
-				uint32 files = 0;
-				std::string report = SaveLastMinutes((uint32)minutes, camera, "last" + std::to_string(minutes) + "min", &files);
-				reply = (files > 0 ? "OK " : "ERROR ") + std::to_string(files) + " file(s): " + report;
-				CAM_LOG_INFO("Saved the last {0} minute(s) on request: {1}", minutes, report);
-			}
-		}
-		else if (command == "status")
-		{
-			reply = "Cameras:\n";
-			{
-				std::lock_guard<std::mutex> lock(m_ClientsMutex);
-				for (auto &client : m_Clients)
-				{
-					uint32 frames = client->Frames.Size();
-					double seconds = frames > 1 ? (client->Frames.At(frames - 1).TimeMS - client->Frames.At(0).TimeMS) / 1000.0 : 0.0;
-					char line[160];
-					snprintf(line, sizeof(line), "  %s: %u frames buffered (%.0f seconds)\n", client->FrameTitle.c_str(), frames, seconds);
-					reply += line;
-				}
-
-				if (m_Clients.empty())
-				{
-					reply += "  (none connected)\n";
-				}
-
-				reply += "Displays connected: " + std::to_string(m_Displays.size()) + "\n";
-			}
-
-			reply += "Recordings folder: " + m_Config.Recording.Path + "\n";
-			reply += "Scheduled recording: " + (m_Recorder && m_Recorder->IsScheduled() ? m_Config.Recording.Schedule : std::string("off")) + "\n";
-			reply += "Buffer: the last " + std::to_string(m_Config.VideoBackupDuration) + " minutes per camera";
-		}
-		else if (command == "stop")
-		{
-			reply = "OK, the server is stopping";
-			CAM_LOG_INFO("Stop requested through the control port.");
-			m_StopRequested = true;
-		}
-		else
-		{
-			reply = "ERROR: unknown command (save <minutes> [camera], status, stop)";
-		}
-
-		socket->Send(reply.c_str(), (int32)reply.size(), sender);
-	}
-
-	delete socket;
 }
 
 // ============================================================================================================================ remote control

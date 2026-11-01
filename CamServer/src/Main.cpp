@@ -15,49 +15,6 @@ static void OnStopSignal(int)
 	}
 }
 
-// Sends a command to the running server (control port) and prints the answer. Returns the exit code of the program.
-static int SendControlCommand(uint16 port, const std::string &command)
-{
-	if (port == 0)
-	{
-		std::cerr << "The control port is turned off (control_port = 0)." << std::endl;
-		return 1;
-	}
-
-	Core::Socket *socket = Core::Socket::Create();
-	if (!socket->Open() || !socket->SetNonBlocking(true))
-	{
-		std::cerr << "Could not open a socket." << std::endl;
-		delete socket;
-		return 1;
-	}
-
-	Core::addr_t server = socket->Lookup("127.0.0.1", port);
-	socket->Send(command.c_str(), (int32)command.size(), server);
-
-	// Saving a long video takes a moment.
-	static Byte BUF[8192];
-	for (int waited_ms = 0; waited_ms < 120000; waited_ms += 20)
-	{
-		Core::addr_t sender = {};
-		int32 len = socket->Recv(BUF, sizeof(BUF) - 1, &sender);
-		if (len > 0)
-		{
-			BUF[len] = 0;
-			std::string reply((const char *)BUF);
-			std::cout << reply << std::endl;
-			delete socket;
-			return reply.rfind("ERROR", 0) == 0 ? 1 : 0;
-		}
-
-		Core::SleepMS(20);
-	}
-
-	std::cerr << "No answer from the server on port " << port << ". Is it running (and is control_port the same)?" << std::endl;
-	delete socket;
-	return 1;
-}
-
 // --add_device=camera|display --name="Front door": makes a key for a new device and stores it. --remove_device="Front door", --list_devices.
 static int ManageDevices(const Core::Config &settings, const std::string &file)
 {
@@ -150,18 +107,12 @@ static void PrintHelp()
 		"  --email_test                   Sends a test email with the email settings.\n"
 		"  --face_test=photo.jpg          Analyzes one photo and prints the result.\n"
 		"\n"
-		"Commands for a running server (sent to the control port):\n"
-		"  --record_now=MINUTES           Saves the last minutes of video (optional: --record_camera=NAME).\n"
-		"  --control_status               Prints the status of the server.\n"
-		"  --control_stop                 Stops the server.\n"
-		"\n"
 		"General settings:\n"
 		"  --config=path                  Settings file (default: server.cfg).\n"
 		"  --port=N                       Port of the server.\n"
 		"  --backup_minutes=N             Length of the video backup in minutes.\n"
 		"  --preview=true|false           Shows the frame previews.\n"
 		"  --client_timeout_seconds=N     Seconds without a frame until a client counts as gone.\n"
-		"  --control_port=N               Port for the commands above (0 = off).\n"
 		"  --auth=true|false              Only devices with a key may connect.\n"
 		"  --devices_file=path            File with the devices and their keys.\n"
 		"\n"
@@ -346,7 +297,20 @@ int main(int argc, char *argv[])
 	{
 		CAM_LOG_WARN("backup_minutes ({0}) is too small for record_event_before_seconds + record_event_after_seconds ({1} seconds): the start of the videos of events will be missing.", config.VideoBackupDuration, config.RecordEventBeforeSeconds + config.RecordEventAfterSeconds);
 	}
-	config.ControlPort = (uint16)std::max(settings.GetInt("control_port", config.ControlPort), 0);
+
+	// The old commands for a running server must not start a second server by accident.
+	if (settings.GetInt("record_now", 0) > 0 || settings.GetBool("control_status", false) || settings.GetBool("control_stop", false))
+	{
+		std::cerr << "--record_now, --control_status and --control_stop were removed together with the control port. Use the remote control (WebSocket, websocket_port) with the commands save, status and stop." << std::endl;
+		Core::Shutdown();
+		return 1;
+	}
+
+	if (!settings.GetString("control_port", "").empty())
+	{
+		CAM_LOG_WARN("control_port is not used anymore, the remote control (WebSocket, websocket_port) replaces it. Remove it from the settings.");
+	}
+
 	config.WebSocketPort = (uint16)std::max(settings.GetInt("websocket_port", config.WebSocketPort), 0);
 	config.WebSocketBind = settings.GetString("websocket_bind", config.WebSocketBind);
 	config.WebSocketToken = settings.GetString("websocket_token", config.WebSocketToken);
@@ -377,28 +341,6 @@ int main(int argc, char *argv[])
 	if (!settings.GetString("add_device", "").empty() || !settings.GetString("remove_device", "").empty() || settings.GetBool("list_devices", false))
 	{
 		int exit_code = ManageDevices(settings, config.DevicesFile);
-		Core::Shutdown();
-		return exit_code;
-	}
-
-	// The commands for a server, which is already running (see the control port). This program just sends the command and prints the answer.
-	std::string command;
-	if (settings.GetInt("record_now", 0) > 0)
-	{
-		command = "save " + std::to_string(settings.GetInt("record_now", 0)) + (settings.GetString("record_camera", "").empty() ? "" : " " + settings.GetString("record_camera", ""));
-	}
-	else if (settings.GetBool("control_status", false))
-	{
-		command = "status";
-	}
-	else if (settings.GetBool("control_stop", false))
-	{
-		command = "stop";
-	}
-
-	if (!command.empty())
-	{
-		int exit_code = SendControlCommand(config.ControlPort, command);
 		Core::Shutdown();
 		return exit_code;
 	}

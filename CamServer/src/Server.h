@@ -101,12 +101,6 @@ struct ServerConfig
 	uint32 RecordEventMaxSeconds = 180;
 
 	/// <summary>
-	/// The port of the control channel (only reachable from this computer), with which a running server is told to save recordings, to report its
-	/// status, or to stop. 0 turns it off.
-	/// </summary>
-	uint16 ControlPort = 45650;
-
-	/// <summary>
 	/// The settings for the emails, which are sent when an unknown person is seen.
 	/// </summary>
 	EmailConfig Email;
@@ -401,11 +395,6 @@ private:
 	void FaceLoop();
 
 	/// <summary>
-	/// The control channel: commands of a program on this computer (CamServer --record_now, ...).
-	/// </summary>
-	void ControlLoop();
-
-	/// <summary>
 	/// Called, when an unknown person is seen by a camera (a face, which matches nobody of the known people), at most once per cooldown and camera.
 	/// </summary>
 	/// <param name="camera">The name of the camera.</param>
@@ -449,7 +438,6 @@ private:
 	std::unique_ptr<Mailer> m_Mailer;
 	std::unique_ptr<Notifier> m_Notifier;
 	std::unique_ptr<Recorder> m_Recorder;
-	std::thread m_ControlThread;
 	std::atomic<bool> m_StopRequested{ false };
 
 	// Videos of events, which wait for their end (per camera name), guarded by m_EventClipsMutex.

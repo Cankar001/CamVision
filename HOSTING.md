@@ -15,7 +15,7 @@ This guide installs the whole server side on **one Ubuntu machine** (22.04 or 24
 
 | Part | What it is | Runs as | Listens on |
 |---|---|---|---|
-| **CamServer** | C++ program: receives the cameras, buffers and records video, recognizes faces, has the remote control (WebSocket) | systemd service `camvision-server` | UDP `45645` (cameras, displays; the whole network), TCP `127.0.0.1:45651` (remote control), UDP `127.0.0.1:45650` (control port) |
+| **CamServer** | C++ program: receives the cameras, buffers and records video, recognizes faces, has the remote control (WebSocket) | systemd service `camvision-server` | UDP `45645` (cameras, displays; the whole network), TCP `127.0.0.1:45651` (remote control) |
 | **CamWebBackend** | Node.js program: login, API, live stream, serves the built web UI | systemd service `camvision-web` | TCP `127.0.0.1:3001` |
 | **CamWeb** | The web UI. It is built once into static files (`CamWeb/out`), which the backend serves. There is no Node process for it at runtime. | (files) | (through the backend) |
 | **Apache** | Your existing reverse proxy: HTTPS in front of the backend | the apache2 service | `80`, `443` |
@@ -174,9 +174,8 @@ journalctl -u camvision-server -f       # the log; Ctrl+C leaves it
 Check that it is up:
 
 ```bash
-ss -tulpn | grep -E '45645|45650|45651'
+ss -tulpn | grep -E '45645|45651'
 # udp 0.0.0.0:45645      (cameras, displays)
-# udp 127.0.0.1:45650    (control port)
 # tcp 127.0.0.1:45651    (remote control)
 sudo ls -l /opt/camvision/CamServer/websocket_token.txt     # made on the first start, owner camvision, mode 600
 ```
@@ -333,7 +332,7 @@ sudo ufw allow from 192.168.1.0/24 to any port 45645 proto udp   # cameras and d
 # the SSH rule you already have
 ```
 
-Do **not** open `3001`, `45650` or `45651`. They listen on `127.0.0.1` and are not reachable from the network anyway; the firewall rule is a second layer.
+Do **not** open `3001` or `45651`. They listen on `127.0.0.1` and are not reachable from the network anyway; the firewall rule is a second layer.
 
 **Never forward UDP 45645 from your router to the internet.** The connection of the cameras is authenticated and encrypted, but the server is made for a trusted network. If a camera is somewhere else, connect it through a VPN (see [step 13](#13-reaching-it-from-outside-the-house)).
 
@@ -404,7 +403,7 @@ The recordings are as big as they are, back them up (or not) as you like.
 Do not open ports on your router for this. The login protects the web UI, but it controls your cameras. Better options:
 
 - **Tailscale** (or WireGuard): install it on the Ubuntu machine and on your phone and laptop (`curl -fsSL https://tailscale.com/install.sh | sh`, `sudo tailscale up`). Your devices then reach the machine like at home, from anywhere, and nothing is exposed. `sudo tailscale cert` gives a real HTTPS certificate for the machine name, which you can use in the Apache virtual host. Cameras at other places can send to the Tailscale address of the machine.
-- If you must expose Apache (port 443) to the internet: use a strong password, keep the machine updated (`sudo apt install unattended-upgrades`), and consider `fail2ban` (`sudo apt install fail2ban`). The login is already limited to 10 tries per minute and address, but a second layer is better. Never expose `45645`, `45650`, `45651` or `3001`.
+- If you must expose Apache (port 443) to the internet: use a strong password, keep the machine updated (`sudo apt install unattended-upgrades`), and consider `fail2ban` (`sudo apt install fail2ban`). The login is already limited to 10 tries per minute and address, but a second layer is better. Never expose `45645`, `45651` or `3001`.
 
 ---
 

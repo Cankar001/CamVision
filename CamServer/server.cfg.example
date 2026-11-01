@@ -32,7 +32,7 @@ preview = true
 
 # ---- Recordings ------------------------------------------------------------------------------------------------------------------------------
 # The server keeps the last backup_minutes of every camera in memory. These minutes can be saved as a video file at any time (see README, section
-# Recordings): with the command CamServer --record_now=MINUTES, with the key R in a preview window, or automatically when an unknown person is seen.
+# Recordings): with the "save" command of the remote control (WebSocket, see below), with the key R in a preview window, or automatically when an unknown person is seen.
 # On top of that, it can record continuously at fixed times (a schedule), for example every night.
 # The videos are AVI files (Motion JPEG), they play in VLC, Windows Media Player and most other players.
 
@@ -72,14 +72,6 @@ record_on_unknown_person = false
 record_event_before_seconds = 40
 record_event_after_seconds = 45
 record_event_max_seconds = 180
-
-# The control port. A program on the same computer (never from the network) can tell the running server what to do:
-#   CamServer --record_now=5                      saves the last 5 minutes of all cameras
-#   CamServer --record_now=5 --record_camera=Front   only of the camera "Front"
-#   CamServer --control_status                    shows the cameras, the buffers and the recording settings
-#   CamServer --control_stop                      stops the server properly (finishes the recordings)
-# 0 turns it off.
-control_port = 45650
 
 # ---- Remote control (WebSocket) --------------------------------------------------------------------------------------------------------------
 # A WebSocket, over which the server is controlled with JSON commands: save the buffer of the cameras as videos, list the cameras, the displays and the
@@ -195,7 +187,7 @@ face_event_cooldown = 30
 face_on_displays = true
 
 # Draws the faces (boxes and names) into the videos, which are saved from the buffer of a camera (save in the web UI or the remote control,
-# --record_now, an unknown person). Every frame gets the boxes of the analysis, which is nearest to it in time (face_fps per second), and frames without a
+# the remote control, an unknown person). Every frame gets the boxes of the analysis, which is nearest to it in time (face_fps per second), and frames without a
 # face stay as they are. Drawing means decoding and compressing every frame with a face again, so saving a few minutes takes some seconds longer.
 # false saves the pictures of the camera as they are. (The recording on a schedule is not affected, it writes the frames as they arrive.)
 face_on_saved_clips = true

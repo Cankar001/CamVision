@@ -132,7 +132,7 @@ struct FaceConfig
 	bool DrawOnDisplays = true;
 
 	/// <summary>
-	/// Draws the faces into the videos, which are saved from the buffer of a camera (the "save" of the remote control, --record_now, an unknown person).
+	/// Draws the faces into the videos, which are saved from the buffer of a camera (the "save" of the remote control, an unknown person).
 	/// The boxes are those of the analysis nearest in time to each frame. If false, the videos have the pictures of the camera as they are. Drawing needs
 	/// every frame to be decoded and compressed again, so saving takes longer.
 	/// </summary>
