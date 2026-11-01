@@ -2,6 +2,7 @@
 
 #include <Cam-Core.h>
 
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,9 +33,70 @@ struct FaceConfig
 	std::string KnownFacesPath = "known_faces";
 
 	/// <summary>
-	/// Minimum confidence (0 - 1) of the detector for a face.
+	/// Minimum confidence (0 - 1) of the detector for a face. 0.7 finds a lot of things, which are not faces (tires, door handles, lamps), 0.9 is the value
+	/// of the OpenCV examples.
 	/// </summary>
-	float ScoreThreshold = 0.7f;
+	float ScoreThreshold = 0.9f;
+
+	/// <summary>
+	/// Smallest face (width and height in pixels of the original frame), which is used. Smaller detections are mostly wrong, and even real ones are too small to
+	/// be recognized reliably. 0 turns the check off.
+	/// </summary>
+	int32 MinFaceSize = 40;
+
+	/// <summary>
+	/// Smallest face (width and height in pixels of the scaled down frame, see DetectWidth), which is used. 0 turns the check off.
+	/// </summary>
+	int32 MinDetectFaceSize = 24;
+
+	/// <summary>
+	/// Allowed ratio width / height of the face box. Faces are about as wide as high, tires, door frames and other objects often are not.
+	/// </summary>
+	float MinAspectRatio = 0.6f;
+	float MaxAspectRatio = 1.3f;
+
+	/// <summary>
+	/// Checks the five landmarks of the detector (eyes, nose, mouth corners): inside the box, eyes above nose above mouth, eyes next to each other.
+	/// </summary>
+	bool CheckLandmarks = true;
+
+	/// <summary>
+	/// A face has to be seen in at least ConfirmFrames of the last ConfirmWindow analyses at about the same place, before it is shown and reported.
+	/// This removes detections, which appear for a single frame. 1 turns the confirmation off.
+	/// </summary>
+	uint32 ConfirmFrames = 3;
+	uint32 ConfirmWindow = 5;
+
+	/// <summary>
+	/// A face, which does not move at all for this many seconds, is a part of the scene (for example a pattern at the door), not a person, and is ignored
+	/// until it moves. 0 turns this off.
+	/// </summary>
+	uint32 StaticSeconds = 600;
+
+	/// <summary>
+	/// A face below MatchThreshold, but at least UncertainSimilarity, is only reported as "unknown person" (and mailed), if it is also reliable: at least
+	/// ReliableFaceSize pixels wide and a detector score of at least ReliableScore. Otherwise it is "uncertain" (logged, but no alarm).
+	/// UncertainSimilarity -1 turns the grey zone off.
+	/// </summary>
+	float UncertainSimilarity = 0.25f;
+	int32 ReliableFaceSize = 80;
+	float ReliableScore = 0.95f;
+
+	/// <summary>
+	/// Photos of known people need at least this detector score and face size (pixels of the original photo), otherwise they are not used.
+	/// </summary>
+	float EnrollMinScore = 0.9f;
+	int32 EnrollMinFaceSize = 80;
+
+	/// <summary>
+	/// A person with fewer photos than this gets a warning (a single photo gives unreliable matches).
+	/// </summary>
+	uint32 RecommendedPhotos = 3;
+
+	/// <summary>
+	/// Stores a crop of every face, which causes an "unknown person" event, with its numbers in the file name (to tune the settings). In SnapshotPath/camera/crops.
+	/// </summary>
+	bool DebugCrops = false;
 
 	/// <summary>
 	/// Minimum cosine similarity (-1 - 1) between a face and a known face, to count as the same person. 0.363 is the value recommended by the authors of the model.
@@ -108,6 +170,11 @@ struct FaceResult
 	/// The cosine similarity to the best matching known person (0, if nobody is known).
 	/// </summary>
 	float Similarity = 0.0f;
+
+	/// <summary>
+	/// True, if the face is not recognized, but too small or unsure (see UncertainSimilarity) to call it an unknown person.
+	/// </summary>
+	bool Uncertain = false;
 };
 
 /// <summary>
@@ -142,7 +209,8 @@ public:
 	/// Finds all faces in the frame, and recognizes them, if recognition is possible.
 	/// </summary>
 	/// <param name="frame">A color frame (BGR).</param>
-	std::vector<FaceResult> Analyze(const cv::Mat &frame);
+	/// <param name="rejections">Optional: gets one line for every detection, which was dropped by the filters, and why.</param>
+	std::vector<FaceResult> Analyze(const cv::Mat &frame, std::vector<std::string> *rejections = nullptr);
 
 	/// <summary>
 	/// Loads the known faces again, if photos were added, changed or removed in the known faces folder.
@@ -159,7 +227,44 @@ private:
 };
 
 /// <summary>
-/// Draws the boxes of the faces and their names into the frame. Green: known person, red: unknown person, yellow: face (no recognition possible).
+/// Follows the faces of one camera from analysis to analysis. Only faces, which were seen often enough at the same place (ConfirmFrames) and which are not
+/// frozen (StaticSeconds) are passed on. A person, who was recognized a moment ago, keeps the name while the face is turned or blurred for a frame.
+/// Not thread safe, one tracker per camera.
+/// </summary>
+class FaceTracker
+{
+public:
+
+	FaceTracker(const FaceConfig &config);
+
+	/// <param name="faces">All faces of one analysis.</param>
+	/// <param name="nowMS">The time of the analysis.</param>
+	/// <param name="camera">The name of the camera, for the log.</param>
+	/// <returns>The faces to show and report.</returns>
+	std::vector<FaceResult> Update(const std::vector<FaceResult> &faces, int64 nowMS, const std::string &camera);
+
+private:
+
+	struct Track
+	{
+		cv::Rect Box;
+		cv::Rect Anchor;
+		int64 AnchorSinceMS = 0;
+		int64 LastSeenMS = 0;
+		std::deque<bool> History;
+		bool StaticLogged = false;
+
+		std::string Name;
+		float Similarity = 0.0f;
+		int64 RecognizedMS = 0;
+	};
+
+	FaceConfig m_Config;
+	std::vector<Track> m_Tracks;
+};
+
+/// <summary>
+/// Draws the boxes of the faces and their names into the frame. Green: known person, red: unknown person, orange: uncertain, yellow: face (no recognition possible).
 /// </summary>
 void DrawFaces(cv::Mat &frame, const std::vector<FaceResult> &faces, bool recognitionActive);
 

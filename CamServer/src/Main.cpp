@@ -182,6 +182,11 @@ static void PrintHelp()
 		"  --face_fps=N                   --face_on_displays=true|false    --face_event_cooldown=SECONDS\n"
 		"  --face_snapshots=true|false    --face_snapshot_path=path\n"
 		"  --face_on_saved_clips=true|false\n"
+		"  --face_min_size=PX             --face_min_detect_size=PX        --face_min_aspect=F    --face_max_aspect=F\n"
+		"  --face_check_landmarks=true|false                               --face_confirm_frames=N  --face_confirm_window=N\n"
+		"  --face_static_seconds=N        --face_uncertain_similarity=F    --face_reliable_size=PX  --face_reliable_score=F\n"
+		"  --face_enroll_min_score=F      --face_enroll_min_size=PX        --face_recommended_photos=N\n"
+		"  --face_debug_crops=true|false\n"
 		"\n"
 		"Recording:\n"
 		"  --recordings_path=path         --record_schedule=SCHEDULE       --record_cameras=A,B\n"
@@ -276,6 +281,21 @@ int main(int argc, char *argv[])
 	faces.Snapshots = settings.GetBool("face_snapshots", faces.Snapshots);
 	faces.SnapshotPath = settings.GetString("face_snapshot_path", faces.SnapshotPath);
 	faces.EventCooldownSeconds = (uint32)std::max(settings.GetInt("face_event_cooldown", faces.EventCooldownSeconds), 0);
+	faces.MinFaceSize = std::max(settings.GetInt("face_min_size", faces.MinFaceSize), 0);
+	faces.MinDetectFaceSize = std::max(settings.GetInt("face_min_detect_size", faces.MinDetectFaceSize), 0);
+	faces.MinAspectRatio = settings.GetFloat("face_min_aspect", faces.MinAspectRatio);
+	faces.MaxAspectRatio = settings.GetFloat("face_max_aspect", faces.MaxAspectRatio);
+	faces.CheckLandmarks = settings.GetBool("face_check_landmarks", faces.CheckLandmarks);
+	faces.ConfirmFrames = (uint32)std::max(settings.GetInt("face_confirm_frames", faces.ConfirmFrames), 1);
+	faces.ConfirmWindow = (uint32)std::max(settings.GetInt("face_confirm_window", faces.ConfirmWindow), 1);
+	faces.StaticSeconds = (uint32)std::max(settings.GetInt("face_static_seconds", faces.StaticSeconds), 0);
+	faces.UncertainSimilarity = settings.GetFloat("face_uncertain_similarity", faces.UncertainSimilarity);
+	faces.ReliableFaceSize = std::max(settings.GetInt("face_reliable_size", faces.ReliableFaceSize), 0);
+	faces.ReliableScore = settings.GetFloat("face_reliable_score", faces.ReliableScore);
+	faces.EnrollMinScore = settings.GetFloat("face_enroll_min_score", faces.EnrollMinScore);
+	faces.EnrollMinFaceSize = std::max(settings.GetInt("face_enroll_min_size", faces.EnrollMinFaceSize), 0);
+	faces.RecommendedPhotos = (uint32)std::max(settings.GetInt("face_recommended_photos", faces.RecommendedPhotos), 0);
+	faces.DebugCrops = settings.GetBool("face_debug_crops", faces.DebugCrops);
 
 	RecorderConfig &recording = config.Recording;
 	recording.Path = settings.GetString("recordings_path", recording.Path);

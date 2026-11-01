@@ -1300,6 +1300,7 @@ void Server::FaceLoop()
 	std::unordered_map<uint64, int64> last_analysis_ms;
 	std::unordered_map<uint64, uint32> last_number;
 	std::unordered_map<uint64, std::unordered_map<std::string, int64>> last_event_ms;
+	std::unordered_map<uint64, FaceTracker> trackers;
 
 	while (m_Running)
 	{
@@ -1347,6 +1348,9 @@ void Server::FaceLoop()
 				CAM_LOG_ERROR("Face analysis failed for {0}: {1}", job.Title, e.what());
 			}
 
+			// Only faces, which were seen in several analyses at the same place (and are not frozen) are shown and reported.
+			faces = trackers.try_emplace(job.Address, config).first->second.Update(faces, Core::QueryMS(), job.Title);
+
 			last_analysis_ms[job.Address] = Core::QueryMS();
 
 			{
@@ -1380,7 +1384,7 @@ void Server::FaceLoop()
 			FaceResult unknown_face;
 			for (const FaceResult &face : faces)
 			{
-				std::string identity = face.Recognized ? face.Name : (recognition ? "unknown" : "face");
+				std::string identity = face.Recognized ? face.Name : (recognition ? (face.Uncertain ? "uncertain" : "unknown") : "face");
 				int64 &last = last_event_ms[job.Address][identity];
 				int64 event_time = Core::QueryMS();
 				if (last != 0 && event_time - last < cooldown_ms)
@@ -1393,9 +1397,38 @@ void Server::FaceLoop()
 				{
 					CAM_LOG_INFO("{0}: {1} recognized (similarity {2:.2f})", job.Title, face.Name, face.Similarity);
 				}
+				else if (recognition && face.Uncertain)
+				{
+					// Too small or too unsure for an alarm: logged only.
+					CAM_LOG_INFO("{0}: uncertain face, no alarm (best similarity {1:.2f}, needed {2:.2f}, size {3}x{4}, detector score {5:.2f})", job.Title, face.Similarity, config.MatchThreshold, face.Box.width, face.Box.height, face.Score);
+				}
 				else if (recognition)
 				{
-					CAM_LOG_INFO("{0}: unknown person (best similarity {1:.2f})", job.Title, face.Similarity);
+					CAM_LOG_INFO("{0}: unknown person (best similarity {1:.2f}, size {2}x{3}, detector score {4:.2f})", job.Title, face.Similarity, face.Box.width, face.Box.height, face.Score);
+
+					if (config.DebugCrops)
+					{
+						try
+						{
+							std::filesystem::path folder = std::filesystem::path(config.SnapshotPath) / SafeName(job.Title) / "crops";
+							std::filesystem::create_directories(folder);
+
+							// A border around the face, to see what is around it.
+							int margin_x = face.Box.width * 3 / 10, margin_y = face.Box.height * 3 / 10;
+							cv::Rect area = cv::Rect(face.Box.x - margin_x, face.Box.y - margin_y, face.Box.width + 2 * margin_x, face.Box.height + 2 * margin_y) & cv::Rect(0, 0, frame.cols, frame.rows);
+							char numbers[96];
+							snprintf(numbers, sizeof(numbers), "_sim%.2f_score%.2f_%dx%d.jpg", face.Similarity, face.Score, face.Box.width, face.Box.height);
+							std::string file = (folder / (TimestampString() + numbers)).string();
+							if (area.area() > 0 && cv::imwrite(file, frame(area)))
+							{
+								CAM_LOG_INFO("Crop of the unknown face stored: {}", file);
+							}
+						}
+						catch (const std::exception &e)
+						{
+							CAM_LOG_ERROR("Could not store the crop of the face: {}", e.what());
+						}
+					}
 
 					// Only with recognition, a face can be "unknown". Without it, every face is just a face.
 					if (!unknown_person)
@@ -1409,7 +1442,7 @@ void Server::FaceLoop()
 					CAM_LOG_INFO("{0}: face detected (score {1:.2f})", job.Title, face.Score);
 				}
 
-				if (!snapshot_needed)
+				if (!snapshot_needed && !face.Uncertain)
 				{
 					snapshot_needed = true;
 					snapshot_identity = identity;

@@ -55,6 +55,85 @@ static cv::Mat PadToMultipleOf32(const cv::Mat &image)
 }
 #endif
 
+// Checks, if a detection (one row of the detector: box, 5 landmarks, score) looks like a face. The values have to be in the same coordinates (any scale).
+// Right eye and left eye are those of the person, so the right eye is on the left side of the picture. Returns false and the reason otherwise.
+static bool LooksLikeFace(const cv::Mat &face, const FaceConfig &config, std::string &reason)
+{
+	float x = face.at<float>(0, 0), y = face.at<float>(0, 1), w = face.at<float>(0, 2), h = face.at<float>(0, 3);
+	char text[96];
+	if (h <= 0.0f || w <= 0.0f)
+	{
+		reason = "empty box";
+		return false;
+	}
+
+	float aspect = w / h;
+	if (aspect < config.MinAspectRatio || aspect > config.MaxAspectRatio)
+	{
+		snprintf(text, sizeof(text), "box ratio %.2f (allowed %.2f - %.2f)", aspect, config.MinAspectRatio, config.MaxAspectRatio);
+		reason = text;
+		return false;
+	}
+
+	if (!config.CheckLandmarks)
+	{
+		return true;
+	}
+
+	float lx[5], ly[5];
+	for (int i = 0; i < 5; ++i)
+	{
+		lx[i] = face.at<float>(0, 4 + i * 2);
+		ly[i] = face.at<float>(0, 5 + i * 2);
+	}
+
+	// right eye, left eye, nose, right and left corner of the mouth
+	const float tolerance_x = w * 0.15f, tolerance_y = h * 0.15f;
+	for (int i = 0; i < 5; ++i)
+	{
+		if (lx[i] < x - tolerance_x || lx[i] > x + w + tolerance_x || ly[i] < y - tolerance_y || ly[i] > y + h + tolerance_y)
+		{
+			reason = "landmark outside of the box";
+			return false;
+		}
+	}
+
+	float eye_distance = lx[1] - lx[0];
+	if (eye_distance < w * 0.2f || eye_distance > w * 0.85f)
+	{
+		reason = "eyes at an impossible distance";
+		return false;
+	}
+
+	if (std::fabs(ly[0] - ly[1]) > eye_distance * 0.6f)
+	{
+		reason = "eyes not on one level";
+		return false;
+	}
+
+	float eyes_y = (ly[0] + ly[1]) * 0.5f;
+	float mouth_y = (ly[3] + ly[4]) * 0.5f;
+	if (!(eyes_y < ly[2] && ly[2] < mouth_y))
+	{
+		reason = "eyes, nose and mouth are not in this order from top to bottom";
+		return false;
+	}
+
+	if (lx[2] < lx[0] - eye_distance * 0.4f || lx[2] > lx[1] + eye_distance * 0.4f)
+	{
+		reason = "nose is not between the eyes";
+		return false;
+	}
+
+	if (lx[4] <= lx[3])
+	{
+		reason = "mouth corners are the wrong way round";
+		return false;
+	}
+
+	return true;
+}
+
 static bool IsImageFile(const std::filesystem::path &path)
 {
 	std::string extension = path.extension().string();
@@ -211,17 +290,45 @@ void FaceAnalyzer::LoadKnownFaces()
 				continue;
 			}
 
-			// The photo should show one person. If there are more faces, the biggest one is used.
-			int best = 0;
+			// The photo should show one person. If there are more faces, the biggest one, which looks like a face, is used.
+			int best = -1;
 			float best_area = 0.0f;
+			std::string reason = "no face looks like a face";
 			for (int i = 0; i < faces.rows; ++i)
 			{
 				float area = faces.at<float>(i, 2) * faces.at<float>(i, 3);
-				if (area > best_area)
+				if (area <= best_area)
 				{
-					best_area = area;
-					best = i;
+					continue;
 				}
+
+				cv::Mat candidate = faces.row(i);
+				if (!LooksLikeFace(candidate, m_Config, reason))
+				{
+					continue;
+				}
+
+				if (candidate.at<float>(0, 14) < m_Config.EnrollMinScore)
+				{
+					reason = "detector score " + std::to_string(candidate.at<float>(0, 14)) + " is below the minimum for photos (" + std::to_string(m_Config.EnrollMinScore) + ")";
+					continue;
+				}
+
+				if (m_Config.EnrollMinFaceSize > 0 && std::min(candidate.at<float>(0, 2), candidate.at<float>(0, 3)) * scale < m_Config.EnrollMinFaceSize)
+				{
+					reason = "the face is smaller than " + std::to_string(m_Config.EnrollMinFaceSize) + " pixels";
+					continue;
+				}
+
+				best_area = area;
+				best = i;
+			}
+
+			if (best < 0)
+			{
+				CAM_LOG_WARN("The photo {0} is not used: {1}. Use a sharp photo, in which the face is large and looks at the camera.", photo.second.string(), reason);
+				++without_face;
+				continue;
 			}
 
 			cv::Mat face = faces.row(best).clone();
@@ -246,6 +353,10 @@ void FaceAnalyzer::LoadKnownFaces()
 	for (const auto &person : known)
 	{
 		used += (uint32)person.second.size();
+		if (person.second.size() < m_Config.RecommendedPhotos)
+		{
+			CAM_LOG_WARN("{0} has only {1} usable photo(s). {2} or more photos (different light, angle, with and without glasses) recognize much more reliably.", person.first, person.second.size(), m_Config.RecommendedPhotos);
+		}
 	}
 
 	m_Impl->Known = std::move(known);
@@ -297,7 +408,7 @@ uint32 FaceAnalyzer::GetKnownPeopleCount() const
 	return (uint32)m_Impl->Known.size();
 }
 
-std::vector<FaceResult> FaceAnalyzer::Analyze(const cv::Mat &frame)
+std::vector<FaceResult> FaceAnalyzer::Analyze(const cv::Mat &frame, std::vector<std::string> *rejections)
 {
 	std::vector<FaceResult> results;
 
@@ -328,8 +439,39 @@ std::vector<FaceResult> FaceAnalyzer::Analyze(const cv::Mat &frame)
 	bool recognize = m_Impl->Recognizer && !m_Impl->Known.empty();
 	for (int i = 0; i < faces.rows; ++i)
 	{
-		// Box and landmarks (the first 14 values) in the coordinates of the original frame.
+		// Detections, which cannot be faces, are dropped before the (slow) recognition: too small, wrong shape, landmarks in the wrong places.
 		cv::Mat face = faces.row(i).clone();
+		std::string reason;
+		bool plausible = true;
+		if (std::min(face.at<float>(0, 2), face.at<float>(0, 3)) < (float)m_Config.MinDetectFaceSize)
+		{
+			reason = "smaller than " + std::to_string(m_Config.MinDetectFaceSize) + " pixels in the scaled down frame";
+			plausible = false;
+		}
+		else if (std::min(face.at<float>(0, 2), face.at<float>(0, 3)) * scale < (float)m_Config.MinFaceSize)
+		{
+			reason = "smaller than " + std::to_string(m_Config.MinFaceSize) + " pixels in the original frame";
+			plausible = false;
+		}
+		else
+		{
+			plausible = LooksLikeFace(face, m_Config, reason);
+		}
+
+		if (!plausible)
+		{
+			if (rejections)
+			{
+				char text[256];
+				snprintf(text, sizeof(text), "position %d,%d size %dx%d score %.2f: %s", (int)(face.at<float>(0, 0) * scale), (int)(face.at<float>(0, 1) * scale),
+					(int)(face.at<float>(0, 2) * scale), (int)(face.at<float>(0, 3) * scale), face.at<float>(0, 14), reason.c_str());
+				rejections->push_back(text);
+			}
+
+			continue;
+		}
+
+		// Box and landmarks (the first 14 values) in the coordinates of the original frame.
 		for (int c = 0; c < 14; ++c)
 		{
 			face.at<float>(0, c) = (float)(face.at<float>(0, c) * scale);
@@ -373,6 +515,12 @@ std::vector<FaceResult> FaceAnalyzer::Analyze(const cv::Mat &frame)
 					result.Recognized = true;
 					result.Name = *best_name;
 				}
+				else if (best >= m_Config.UncertainSimilarity)
+				{
+					// Not the same person as a known one, but not far away either: only a clear and big face is called an unknown person.
+					bool reliable = result.Box.width >= m_Config.ReliableFaceSize && result.Box.height >= m_Config.ReliableFaceSize && result.Score >= m_Config.ReliableScore;
+					result.Uncertain = !reliable;
+				}
 			}
 			catch (const cv::Exception &e)
 			{
@@ -385,6 +533,127 @@ std::vector<FaceResult> FaceAnalyzer::Analyze(const cv::Mat &frame)
 #endif
 
 	return results;
+}
+
+static float IntersectionOverUnion(const cv::Rect &a, const cv::Rect &b)
+{
+	int intersection = (a & b).area();
+	int total = a.area() + b.area() - intersection;
+	return total > 0 ? (float)intersection / (float)total : 0.0f;
+}
+
+FaceTracker::FaceTracker(const FaceConfig &config)
+	: m_Config(config)
+{
+}
+
+std::vector<FaceResult> FaceTracker::Update(const std::vector<FaceResult> &faces, int64 nowMS, const std::string &camera)
+{
+	// Tracks, which were not seen for a while, are gone (also resets the "static" timer of a face, which was away).
+	const int64 forget_ms = 10000;
+	const size_t window = std::max<size_t>(m_Config.ConfirmWindow, m_Config.ConfirmFrames);
+	const size_t needed = std::max<uint32>(m_Config.ConfirmFrames, 1);
+
+	std::vector<bool> seen(m_Tracks.size(), false);
+	std::vector<FaceResult> result;
+	std::vector<Track> created;
+
+	for (const FaceResult &input : faces)
+	{
+		FaceResult face = input;
+
+		int best = -1;
+		float best_overlap = 0.2f;
+		for (size_t t = 0; t < m_Tracks.size(); ++t)
+		{
+			float overlap = seen[t] ? 0.0f : IntersectionOverUnion(face.Box, m_Tracks[t].Box);
+			if (overlap > best_overlap)
+			{
+				best_overlap = overlap;
+				best = (int)t;
+			}
+		}
+
+		Track fresh;
+		Track &track = best >= 0 ? m_Tracks[best] : fresh;
+		if (best >= 0)
+		{
+			seen[best] = true;
+		}
+		else
+		{
+			track.Anchor = face.Box;
+			track.AnchorSinceMS = nowMS;
+		}
+
+		track.Box = face.Box;
+		track.LastSeenMS = nowMS;
+		track.History.push_back(true);
+		while (track.History.size() > window)
+		{
+			track.History.pop_front();
+		}
+
+		if (IntersectionOverUnion(face.Box, track.Anchor) < 0.7f)
+		{
+			track.Anchor = face.Box;
+			track.AnchorSinceMS = nowMS;
+			track.StaticLogged = false;
+		}
+
+		// The person was recognized a moment ago and is the same face: a turned head or a blurred frame does not make a stranger of them.
+		if (face.Recognized)
+		{
+			track.Name = face.Name;
+			track.Similarity = face.Similarity;
+			track.RecognizedMS = nowMS;
+		}
+		else if (!track.Name.empty() && nowMS - track.RecognizedMS < 5000)
+		{
+			face.Recognized = true;
+			face.Uncertain = false;
+			face.Name = track.Name;
+			face.Similarity = track.Similarity;
+		}
+
+		size_t hits = (size_t)std::count(track.History.begin(), track.History.end(), true);
+		bool confirmed = hits >= needed;
+		bool frozen = m_Config.StaticSeconds > 0 && nowMS - track.AnchorSinceMS >= (int64)m_Config.StaticSeconds * 1000;
+		if (confirmed && frozen)
+		{
+			if (!track.StaticLogged)
+			{
+				CAM_LOG_INFO("{0}: ignoring a face at {1},{2} ({3}x{4}), it did not move for {5} seconds, so it is part of the scene.", camera, face.Box.x, face.Box.y, face.Box.width, face.Box.height, m_Config.StaticSeconds);
+				track.StaticLogged = true;
+			}
+		}
+		else if (confirmed)
+		{
+			result.push_back(face);
+		}
+
+		if (best < 0)
+		{
+			created.push_back(track);
+		}
+	}
+
+	// Tracks without a face in this analysis: a miss.
+	for (size_t t = 0; t < m_Tracks.size(); ++t)
+	{
+		if (!seen[t])
+		{
+			m_Tracks[t].History.push_back(false);
+			while (m_Tracks[t].History.size() > window)
+			{
+				m_Tracks[t].History.pop_front();
+			}
+		}
+	}
+
+	m_Tracks.erase(std::remove_if(m_Tracks.begin(), m_Tracks.end(), [&](const Track &track) { return nowMS - track.LastSeenMS > forget_ms; }), m_Tracks.end());
+	m_Tracks.insert(m_Tracks.end(), created.begin(), created.end());
+	return result;
 }
 
 void DrawFaces(cv::Mat &frame, const std::vector<FaceResult> &faces, bool recognitionActive)
@@ -404,6 +673,11 @@ void DrawFaces(cv::Mat &frame, const std::vector<FaceResult> &faces, bool recogn
 			char text[32];
 			snprintf(text, sizeof(text), " %.2f", face.Similarity);
 			label = face.Name + text;
+		}
+		else if (face.Uncertain)
+		{
+			color = cv::Scalar(0, 165, 255);	// orange
+			label = "uncertain";
 		}
 		else
 		{
@@ -441,8 +715,14 @@ int RunFaceTest(const FaceConfig &config, const std::string &imagePath)
 
 	std::cout << "Known people: " << analyzer.GetKnownPeopleCount() << (analyzer.CanRecognize() ? "" : "  (recognition is not active)") << std::endl;
 
-	std::vector<FaceResult> faces = analyzer.Analyze(image);
+	std::vector<std::string> rejections;
+	std::vector<FaceResult> faces = analyzer.Analyze(image, &rejections);
 	std::cout << "Faces found in " << imagePath << ": " << faces.size() << std::endl;
+	for (const std::string &rejection : rejections)
+	{
+		std::cout << "  Dropped (not a face): " << rejection << std::endl;
+	}
+
 	for (size_t i = 0; i < faces.size(); ++i)
 	{
 		const FaceResult &face = faces[i];
@@ -452,6 +732,10 @@ int RunFaceTest(const FaceConfig &config, const std::string &imagePath)
 			if (face.Recognized)
 			{
 				std::cout << " -> " << face.Name << " (similarity " << face.Similarity << ")";
+			}
+			else if (face.Uncertain)
+			{
+				std::cout << " -> uncertain (best similarity " << face.Similarity << ", needed " << config.MatchThreshold << ", but the face is small or the detector is not sure)";
 			}
 			else
 			{
