@@ -33,27 +33,27 @@ struct FaceConfig
 	std::string KnownFacesPath = "known_faces";
 
 	/// <summary>
-	/// Minimum confidence (0 - 1) of the detector for a face. 0.7 finds a lot of things, which are not faces (tires, door handles, lamps), 0.9 is the value
+	/// Minimum confidence (0 - 1) of the detector for a face. 0.7 finds a lot of things, which are not faces (tires, door handles, lamps), 0.9 misses people who are turned, far away or dark; 0.8 is a compromise. 0.9 is the value
 	/// of the OpenCV examples.
 	/// </summary>
-	float ScoreThreshold = 0.9f;
+	float ScoreThreshold = 0.8f;
 
 	/// <summary>
 	/// Smallest face (width and height in pixels of the original frame), which is used. Smaller detections are mostly wrong, and even real ones are too small to
 	/// be recognized reliably. 0 turns the check off.
 	/// </summary>
-	int32 MinFaceSize = 40;
+	int32 MinFaceSize = 32;
 
 	/// <summary>
 	/// Smallest face (width and height in pixels of the scaled down frame, see DetectWidth), which is used. 0 turns the check off.
 	/// </summary>
-	int32 MinDetectFaceSize = 24;
+	int32 MinDetectFaceSize = 20;
 
 	/// <summary>
 	/// Allowed ratio width / height of the face box. Faces are about as wide as high, tires, door frames and other objects often are not.
 	/// </summary>
-	float MinAspectRatio = 0.6f;
-	float MaxAspectRatio = 1.3f;
+	float MinAspectRatio = 0.5f;
+	float MaxAspectRatio = 1.5f;
 
 	/// <summary>
 	/// Checks the five landmarks of the detector (eyes, nose, mouth corners): inside the box, eyes above nose above mouth, eyes next to each other.
@@ -64,8 +64,8 @@ struct FaceConfig
 	/// A face has to be seen in at least ConfirmFrames of the last ConfirmWindow analyses at about the same place, before it is shown and reported.
 	/// This removes detections, which appear for a single frame. 1 turns the confirmation off.
 	/// </summary>
-	uint32 ConfirmFrames = 3;
-	uint32 ConfirmWindow = 5;
+	uint32 ConfirmFrames = 2;
+	uint32 ConfirmWindow = 4;
 
 	/// <summary>
 	/// A face, which does not move at all for this many seconds, is a part of the scene (for example a pattern at the door), not a person, and is ignored
@@ -79,8 +79,8 @@ struct FaceConfig
 	/// UncertainSimilarity -1 turns the grey zone off.
 	/// </summary>
 	float UncertainSimilarity = 0.25f;
-	int32 ReliableFaceSize = 80;
-	float ReliableScore = 0.95f;
+	int32 ReliableFaceSize = 60;
+	float ReliableScore = 0.9f;
 
 	/// <summary>
 	/// Photos of known people need at least this detector score and face size (pixels of the original photo), otherwise they are not used.

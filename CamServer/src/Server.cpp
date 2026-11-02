@@ -1310,6 +1310,7 @@ void Server::FaceLoop()
 	std::unordered_map<uint64, uint32> last_number;
 	std::unordered_map<uint64, std::unordered_map<std::string, int64>> last_event_ms;
 	std::unordered_map<uint64, FaceTracker> trackers;
+	std::unordered_map<uint64, int64> last_rejection_log_ms;
 
 	while (m_Running)
 	{
@@ -1350,7 +1351,18 @@ void Server::FaceLoop()
 			std::vector<FaceResult> faces;
 			try
 			{
-				faces = m_FaceAnalyzer->Analyze(frame);
+				// With face_debug_crops, the reasons for dropped detections are logged too (at most every 5 seconds per camera), to see why somebody was missed.
+				std::vector<std::string> rejections;
+				faces = m_FaceAnalyzer->Analyze(frame, config.DebugCrops ? &rejections : nullptr);
+				int64 &last_rejection_log = last_rejection_log_ms[job.Address];
+				if (!rejections.empty() && Core::QueryMS() - last_rejection_log >= 5000)
+				{
+					last_rejection_log = Core::QueryMS();
+					for (const std::string &rejection : rejections)
+					{
+						CAM_LOG_INFO("{0}: detection dropped: {1}", job.Title, rejection);
+					}
+				}
 			}
 			catch (const cv::Exception &e)
 			{

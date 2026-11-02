@@ -88,7 +88,7 @@ static bool LooksLikeFace(const cv::Mat &face, const FaceConfig &config, std::st
 	}
 
 	// right eye, left eye, nose, right and left corner of the mouth
-	const float tolerance_x = w * 0.15f, tolerance_y = h * 0.15f;
+	const float tolerance_x = w * 0.3f, tolerance_y = h * 0.3f;
 	for (int i = 0; i < 5; ++i)
 	{
 		if (lx[i] < x - tolerance_x || lx[i] > x + w + tolerance_x || ly[i] < y - tolerance_y || ly[i] > y + h + tolerance_y)
@@ -99,13 +99,13 @@ static bool LooksLikeFace(const cv::Mat &face, const FaceConfig &config, std::st
 	}
 
 	float eye_distance = lx[1] - lx[0];
-	if (eye_distance < w * 0.2f || eye_distance > w * 0.85f)
+	if (eye_distance < w * 0.1f || eye_distance > w * 0.95f)
 	{
 		reason = "eyes at an impossible distance";
 		return false;
 	}
 
-	if (std::fabs(ly[0] - ly[1]) > eye_distance * 0.6f)
+	if (std::fabs(ly[0] - ly[1]) > eye_distance * 1.0f)
 	{
 		reason = "eyes not on one level";
 		return false;
@@ -119,7 +119,8 @@ static bool LooksLikeFace(const cv::Mat &face, const FaceConfig &config, std::st
 		return false;
 	}
 
-	if (lx[2] < lx[0] - eye_distance * 0.4f || lx[2] > lx[1] + eye_distance * 0.4f)
+	// Turned heads (profile) have the nose far to one side, so this is generous.
+	if (lx[2] < lx[0] - eye_distance * 0.9f || lx[2] > lx[1] + eye_distance * 0.9f)
 	{
 		reason = "nose is not between the eyes";
 		return false;
@@ -562,14 +563,30 @@ std::vector<FaceResult> FaceTracker::Update(const std::vector<FaceResult> &faces
 	{
 		FaceResult face = input;
 
+		// A person walking by moves a lot between two analyses (only a few per second), so the boxes often do not overlap anymore.
+		// A face also belongs to a track, if its center is less than about one face width away from the last one.
 		int best = -1;
-		float best_overlap = 0.2f;
+		float best_distance = 1.0f;
 		for (size_t t = 0; t < m_Tracks.size(); ++t)
 		{
-			float overlap = seen[t] ? 0.0f : IntersectionOverUnion(face.Box, m_Tracks[t].Box);
-			if (overlap > best_overlap)
+			if (seen[t])
 			{
-				best_overlap = overlap;
+				continue;
+			}
+
+			const cv::Rect &last = m_Tracks[t].Box;
+			float dx = (face.Box.x + face.Box.width * 0.5f) - (last.x + last.width * 0.5f);
+			float dy = (face.Box.y + face.Box.height * 0.5f) - (last.y + last.height * 0.5f);
+			float size = (float)std::max(std::max(face.Box.width, face.Box.height), std::max(last.width, last.height));
+			float distance = std::sqrt(dx * dx + dy * dy) / std::max(size, 1.0f);
+			if (IntersectionOverUnion(face.Box, last) > 0.2f)
+			{
+				distance = std::min(distance, 0.5f);
+			}
+
+			if (distance < best_distance)
+			{
+				best_distance = distance;
 				best = (int)t;
 			}
 		}
