@@ -108,7 +108,7 @@ struct ServerConfig
 	/// <summary>
 	/// Seconds without any message after which a client is considered dead and removed (its frames are freed). 0 disables the timeout.
 	/// </summary>
-	uint32 ClientTimeoutSeconds = 15;
+	uint32 ClientTimeoutSeconds = 60;
 
 	/// <summary>
 	/// Only devices (cameras and displays) with a key of the list of devices may connect, everything is encrypted. If this is off, everybody in the network

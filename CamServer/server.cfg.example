@@ -25,7 +25,7 @@ backup_minutes = 5
 
 # Seconds without any message after which a client counts as gone (crashed, network down) and is removed, freeing its stored frames.
 # Connected clients send a heartbeat every second, so idle clients are not affected. 0 disables the timeout.
-client_timeout_seconds = 15
+client_timeout_seconds = 60
 
 # Shows a live preview window for every connected camera.
 preview = true
