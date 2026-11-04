@@ -149,6 +149,13 @@ face_max_aspect = 1.5
 # Checks the five points of the detector (eyes, nose, corners of the mouth): inside the box, eyes above the nose above the mouth, eyes next to each other.
 face_check_landmarks = true
 
+# Minimum average brightness (0 - 255) and brightness variation (standard deviation, 0 - 255) inside the face box, in the original picture. Catches the
+# typical night-time false detection: a box over an almost completely dark and/or flat area (an empty dark corner, a shadow, sensor noise), which the
+# landmark check often does not catch, because the "landmarks" there are just as meaningless as the box. A real face, even one only lit by the IR
+# illuminator, is both brighter and has more local contrast (eyes, nose, mouth) than that. 0 turns a check off.
+face_min_brightness = 25
+face_min_contrast = 8
+
 # A face has to be seen in at least face_confirm_frames of the last face_confirm_window analyses at about the same place, before it is shown and reported
 # (one analysis takes 1 / face_fps seconds). This removes detections, which flicker for a single picture. 1 = no confirmation.
 face_confirm_frames = 2

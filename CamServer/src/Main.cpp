@@ -242,6 +242,8 @@ int main(int argc, char *argv[])
 	faces.MinAspectRatio = settings.GetFloat("face_min_aspect", faces.MinAspectRatio);
 	faces.MaxAspectRatio = settings.GetFloat("face_max_aspect", faces.MaxAspectRatio);
 	faces.CheckLandmarks = settings.GetBool("face_check_landmarks", faces.CheckLandmarks);
+	faces.MinFaceBrightness = std::max(settings.GetFloat("face_min_brightness", faces.MinFaceBrightness), 0.0f);
+	faces.MinFaceContrast = std::max(settings.GetFloat("face_min_contrast", faces.MinFaceContrast), 0.0f);
 	faces.ConfirmFrames = (uint32)std::max(settings.GetInt("face_confirm_frames", faces.ConfirmFrames), 1);
 	faces.ConfirmWindow = (uint32)std::max(settings.GetInt("face_confirm_window", faces.ConfirmWindow), 1);
 	faces.StaticSeconds = (uint32)std::max(settings.GetInt("face_static_seconds", faces.StaticSeconds), 0);

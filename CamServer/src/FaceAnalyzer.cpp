@@ -486,6 +486,29 @@ std::vector<FaceResult> FaceAnalyzer::Analyze(const cv::Mat &frame, std::vector<
 			continue;
 		}
 
+		// Night-time false detections are usually a box over an almost completely dark and/or flat area (an empty corner, a shadow, sensor noise),
+		// which the landmark check does not reliably catch, because the "landmarks" are just as meaningless as the box. A real face, even lit only by
+		// the IR illuminator, is both brighter and has more local contrast (eyes, nose, mouth) than that.
+		if (m_Config.MinFaceBrightness > 0.0f || m_Config.MinFaceContrast > 0.0f)
+		{
+			cv::Mat gray;
+			cv::cvtColor(frame(result.Box), gray, cv::COLOR_BGR2GRAY);
+			cv::Scalar mean, stddev;
+			cv::meanStdDev(gray, mean, stddev);
+			if (mean[0] < m_Config.MinFaceBrightness || stddev[0] < m_Config.MinFaceContrast)
+			{
+				if (rejections)
+				{
+					char text[256];
+					snprintf(text, sizeof(text), "position %d,%d size %dx%d score %.2f: too dark or flat to be a face (brightness %.1f, contrast %.1f)",
+						result.Box.x, result.Box.y, result.Box.width, result.Box.height, result.Score, mean[0], stddev[0]);
+					rejections->push_back(text);
+				}
+
+				continue;
+			}
+		}
+
 		if (recognize)
 		{
 			try

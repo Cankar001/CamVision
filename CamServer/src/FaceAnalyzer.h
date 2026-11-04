@@ -61,6 +61,18 @@ struct FaceConfig
 	bool CheckLandmarks = true;
 
 	/// <summary>
+	/// Minimum average brightness (0 - 255, gray) inside the face box, in the original frame. A detection in an almost completely dark area (an empty
+	/// dark corner, a shadow, sensor noise at night) is not a face: even a face lit by the IR illuminator is brighter than this. 0 turns the check off.
+	/// </summary>
+	float MinFaceBrightness = 25.0f;
+
+	/// <summary>
+	/// Minimum brightness variation (standard deviation, 0 - 255) inside the face box. A face has edges and shading (eyes, nose, mouth, hairline); a
+	/// flat dark area or uniform sensor noise at night does not. 0 turns the check off.
+	/// </summary>
+	float MinFaceContrast = 8.0f;
+
+	/// <summary>
 	/// A face has to be seen in at least ConfirmFrames of the last ConfirmWindow analyses at about the same place, before it is shown and reported.
 	/// This removes detections, which appear for a single frame. 1 turns the confirmation off.
 	/// </summary>
