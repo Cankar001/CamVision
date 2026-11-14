@@ -329,8 +329,18 @@ bool Server::OnClientConnected(Core::addr_t &clientAddr, Byte *message, int32 ad
 	{
 		std::lock_guard<std::mutex> lock(m_ClientsMutex);
 		ClientEntry *existing = FindClient(clientAddr);
+		if (!existing)
+		{
+			// Not found by address, but a client with this name may already be registered under a different, stale
+			// address (e.g. its router remapped the UDP port). Without this, the old entry would keep waiting for
+			// messages that never arrive at its old address, time out after client_timeout_seconds, and fire a
+			// spurious "camera offline" email even though the camera never actually stopped sending.
+			existing = FindClientByName(name);
+		}
+
 		if (existing)
 		{
+			existing->Address = clientAddr;
 			existing->LastSeen = std::chrono::steady_clock::now();
 		}
 		else
@@ -879,6 +889,19 @@ ClientEntry *Server::FindClient(const Core::addr_t &clientAddr)
 	for (auto &client : m_Clients)
 	{
 		if (client->Address.Value == clientAddr.Value)
+		{
+			return client.get();
+		}
+	}
+
+	return nullptr;
+}
+
+ClientEntry *Server::FindClientByName(const std::string &name)
+{
+	for (auto &client : m_Clients)
+	{
+		if (client->FrameTitle == name)
 		{
 			return client.get();
 		}

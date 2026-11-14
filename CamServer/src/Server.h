@@ -386,6 +386,7 @@ private:
 	/// Must be called with m_ClientsMutex locked.
 	/// </summary>
 	ClientEntry *FindClient(const Core::addr_t &clientAddr);
+	ClientEntry *FindClientByName(const std::string &name);
 
 	void FramePreview();
 
