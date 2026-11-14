@@ -539,9 +539,11 @@ std::vector<FaceResult> FaceAnalyzer::Analyze(const cv::Mat &frame, std::vector<
 					result.Recognized = true;
 					result.Name = *best_name;
 				}
-				else if (best >= m_Config.UncertainSimilarity)
+				else
 				{
-					// Not the same person as a known one, but not far away either: only a clear and big face is called an unknown person.
+					// Not recognized as a known person. This includes detections which are nowhere near any known face (for example a tire or a
+					// wall pattern, which the detector mistook for a face): a low similarity on its own does not make a detection more trustworthy,
+					// so it must still pass the same reliability gate as a borderline match. Only a clear and big face is called an unknown person.
 					bool reliable = result.Box.width >= m_Config.ReliableFaceSize && result.Box.height >= m_Config.ReliableFaceSize && result.Score >= m_Config.ReliableScore;
 					result.Uncertain = !reliable;
 				}

@@ -86,11 +86,10 @@ struct FaceConfig
 	uint32 StaticSeconds = 600;
 
 	/// <summary>
-	/// A face below MatchThreshold, but at least UncertainSimilarity, is only reported as "unknown person" (and mailed), if it is also reliable: at least
-	/// ReliableFaceSize pixels wide and a detector score of at least ReliableScore. Otherwise it is "uncertain" (logged, but no alarm).
-	/// UncertainSimilarity -1 turns the grey zone off.
+	/// A face, which does not match a known person (this includes a low similarity to all of them, for example a tire or a door handle, which the
+	/// detector mistook for a face), is only reported as "unknown person" (and mailed), if it is also reliable: at least ReliableFaceSize pixels
+	/// wide and a detector score of at least ReliableScore. Otherwise it is "uncertain" (logged, but no alarm).
 	/// </summary>
-	float UncertainSimilarity = 0.25f;
 	int32 ReliableFaceSize = 60;
 	float ReliableScore = 0.9f;
 
@@ -184,7 +183,7 @@ struct FaceResult
 	float Similarity = 0.0f;
 
 	/// <summary>
-	/// True, if the face is not recognized, but too small or unsure (see UncertainSimilarity) to call it an unknown person.
+	/// True, if the face is not recognized, but too small or unsure (see ReliableFaceSize, ReliableScore) to call it an unknown person.
 	/// </summary>
 	bool Uncertain = false;
 };

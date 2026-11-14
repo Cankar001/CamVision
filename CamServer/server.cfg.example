@@ -165,10 +165,9 @@ face_confirm_window = 4
 # it moves. Note: somebody sitting absolutely still in front of the camera is ignored after that time too. 0 = off.
 face_static_seconds = 600
 
-# The grey zone: a face with a similarity between face_uncertain_similarity and face_match_threshold is only an "unknown person" (alarm, email), if it is
-# also reliable: at least face_reliable_size pixels wide and high, and a detector score of at least face_reliable_score. Otherwise it is "uncertain":
-# shown in orange and written to the log, but no alarm. -1 turns the grey zone off.
-face_uncertain_similarity = 0.25
+# A face, which does not match a known person (this includes a low similarity to all of them, for example a tire or a door handle, which the detector
+# mistook for a face), is only an "unknown person" (alarm, email), if it is also reliable: at least face_reliable_size pixels wide and high, and a
+# detector score of at least face_reliable_score. Otherwise it is "uncertain": shown in orange and written to the log, but no alarm.
 face_reliable_size = 40
 face_reliable_score = 0.8
 

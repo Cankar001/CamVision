@@ -136,7 +136,7 @@ static void PrintHelp()
 		"  --face_on_saved_clips=true|false\n"
 		"  --face_min_size=PX             --face_min_detect_size=PX        --face_min_aspect=F    --face_max_aspect=F\n"
 		"  --face_check_landmarks=true|false                               --face_confirm_frames=N  --face_confirm_window=N\n"
-		"  --face_static_seconds=N        --face_uncertain_similarity=F    --face_reliable_size=PX  --face_reliable_score=F\n"
+		"  --face_static_seconds=N        --face_reliable_size=PX          --face_reliable_score=F\n"
 		"  --face_enroll_min_score=F      --face_enroll_min_size=PX        --face_recommended_photos=N\n"
 		"  --face_debug_crops=true|false\n"
 		"\n"
@@ -247,7 +247,6 @@ int main(int argc, char *argv[])
 	faces.ConfirmFrames = (uint32)std::max(settings.GetInt("face_confirm_frames", faces.ConfirmFrames), 1);
 	faces.ConfirmWindow = (uint32)std::max(settings.GetInt("face_confirm_window", faces.ConfirmWindow), 1);
 	faces.StaticSeconds = (uint32)std::max(settings.GetInt("face_static_seconds", faces.StaticSeconds), 0);
-	faces.UncertainSimilarity = settings.GetFloat("face_uncertain_similarity", faces.UncertainSimilarity);
 	faces.ReliableFaceSize = std::max(settings.GetInt("face_reliable_size", faces.ReliableFaceSize), 0);
 	faces.ReliableScore = settings.GetFloat("face_reliable_score", faces.ReliableScore);
 	faces.EnrollMinScore = settings.GetFloat("face_enroll_min_score", faces.EnrollMinScore);
